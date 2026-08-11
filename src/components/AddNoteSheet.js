@@ -130,9 +130,27 @@ export default function AddNoteSheet({ visible, onClose, onSave, editItem, kind 
   }, []);
 
   // 静默保存（不关闭弹窗）
-  const silentSave = useCallback(() => {
+  // isAuto=true: 自动保存（debounce/关闭时），新建笔记不进列表，只缓存 ref
+  // isAuto=false: 手动保存，新建笔记正式进列表
+  const silentSave = useCallback((isAuto = false) => {
     const c = contentRef.current.trim();
     if (!c) return; // 内容为空不保存
+
+    const isNewNote = !currentIdRef.current && !editItem;
+
+    // 新建笔记的自动保存：不调用 onSave，只缓存数据到 ref，避免列表显示中间状态
+    if (isAuto && isNewNote) {
+      // 记录脏状态快照，避免重复触发
+      lastSavedContentRef.current = contentRef.current;
+      lastSavedTitleRef.current = titleRef.current;
+      lastSavedTagsRef.current = tagsRef.current;
+      lastSavedDateRef.current = dateRef.current;
+      isDirtyRef.current = false;
+      setSaveStatus('saving');
+      setTimeout(() => setSaveStatus('saved'), 300);
+      setTimeout(() => setSaveStatus('idle'), 2500);
+      return;
+    }
 
     const payload = {
       id: currentIdRef.current || uid(),
@@ -198,7 +216,7 @@ export default function AddNoteSheet({ visible, onClose, onSave, editItem, kind 
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
       if (isDirtyRef.current && hasRealChanges()) {
-        silentSave();
+        silentSave(true); // 自动保存
       }
     }, 1500);
     return () => {
@@ -206,10 +224,12 @@ export default function AddNoteSheet({ visible, onClose, onSave, editItem, kind 
     };
   }, [content, title, tags, date, visible, silentSave, hasRealChanges]);
 
-  // 手动保存按钮 —— 只有手动保存才触发向量化
+  // 手动保存按钮 —— 正式保存到列表 + 触发向量化
   const handleSave = () => {
     if (!content.trim()) return;
-    silentSave();
+
+    // 正式保存（isAuto=false）：新建笔记此时才真正进列表
+    silentSave(false);
 
     // 手动保存时才生成 embedding（取最终版本内容）
     const payload = {
@@ -238,10 +258,11 @@ export default function AddNoteSheet({ visible, onClose, onSave, editItem, kind 
   };
 
   // 关闭时自动保存（仅在有未保存变动时）
+  // 新建笔记关闭时不保存（用户没点保存=放弃）
   const handleClose = () => {
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     if (contentRef.current.trim() && hasRealChanges()) {
-      silentSave();
+      silentSave(true); // 自动保存：编辑的会 UPDATE，新建的不进列表
     }
     onClose();
   };
