@@ -1,0 +1,18 @@
+{
+  "threshold": 7,
+  "llmBaseUrl": "",
+  "llmApiKey": "",
+  "llmModel": "",
+  "llmPreset": "custom",
+  "embeddingBaseUrl": "",
+  "embeddingApiKey": "",
+  "embeddingModel": "",
+  "embeddingPreset": "custom",
+  "notificationsEnabled": true,
+  "semesterStart": "2025-09-01",
+  "planAnchorMonday": null,
+  "aiBaseUrl": "",
+  "aiApiKey": "",
+  "aiModel": "",
+  "aiModelPreset": ""
+}

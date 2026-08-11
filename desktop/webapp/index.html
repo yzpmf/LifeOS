@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Life OS</title>
+<style>
+:root { --bg:#f5f3f0; --card:#fff; --accent:#e05a33; --text:#1a1a1a; --sub:#888; --border:#e5e2dc; --green:#2ecc71; --blue:#3498db; --purple:#9b59b6; --red:#e74c3c; }
+* { margin:0;padding:0;box-sizing:border-box; }
+body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); height:100vh;overflow:hidden; }
+#app { display:flex;flex-direction:column;height:100vh; }
+header { padding:12px 20px;background:var(--card);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between; }
+header h1 { font-size:20px;font-weight:700; }
+.tabs { display:flex;border-bottom:1px solid var(--border);background:var(--card); }
+.tab { flex:1;text-align:center;padding:14px 0;font-size:13px;color:var(--sub);cursor:pointer;border-bottom:2px solid transparent;transition:all .2s; }
+.tab.active { color:var(--accent);border-bottom-color:var(--accent);font-weight:600; }
+#content { flex:1;overflow-y:auto;padding:16px; }
+.card { background:var(--card);border-radius:12px;padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.06); }
+.card h3 { font-size:16px;margin-bottom:8px; }
+.task-row { display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border); }
+.task-row:last-child { border-bottom:none; }
+.task-row .check { width:20px;height:20px;border-radius:50%;border:2px solid var(--border);cursor:pointer;flex-shrink:0; }
+.task-row .check.done { background:var(--green);border-color:var(--green); }
+.task-row .info { flex:1; }
+.task-row .info .title { font-size:14px; }
+.task-row .info .meta { font-size:11px;color:var(--sub);margin-top:2px; }
+.task-row.done-row .info .title { text-decoration:line-through; color:var(--sub); }
+.q { display:inline-block;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:600;margin-right:6px; }
+.q-urgent { background:#fde;color:#e74c3c; }
+.q-no { background:#edf;color:#9b59b6; }
+.btn { padding:8px 16px;border-radius:8px;border:none;font-size:13px;cursor:pointer;font-weight:600; }
+.btn-accent { background:var(--accent);color:#fff; }
+.btn-outline { background:transparent;border:1px solid var(--border);color:var(--text); }
+.loading { text-align:center;padding:40px;color:var(--sub); }
+.input { width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:var(--bg);outline:none; }
+.input:focus { border-color:var(--accent); }
+.fab { position:fixed;bottom:80px;right:20px;width:56px;height:56px;border-radius:50%;background:var(--accent);color:#fff;border:none;font-size:24px;cursor:pointer;box-shadow:0 4px 12px rgba(224,90,51,.35);z-index:100;display:flex;align-items:center;justify-content:center; }
+.ai-panel { position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);z-index:200;display:flex;flex-direction:column; }
+.ai-header { padding:12px 16px;background:var(--card);display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border); }
+.ai-messages { flex:1;overflow-y:auto;padding:16px; }
+.ai-msg { margin-bottom:12px;max-width:85%; }
+.ai-msg.user { margin-left:auto;background:var(--accent);color:#fff;padding:10px 14px;border-radius:16px 16px 4px 16px; }
+.ai-msg.bot { background:var(--card);padding:10px 14px;border-radius:4px 16px 16px 16px;white-space:pre-wrap;line-height:1.5; }
+.ai-input { padding:12px;background:var(--card);display:flex;gap:8px;border-top:1px solid var(--border); }
+.ai-input input { flex:1; }
+.add-form { background:var(--card);border-radius:12px;padding:16px;margin-bottom:12px; }
+.add-form h3 { margin-bottom:12px; }
+.form-row { margin-bottom:10px; }
+.form-row label { display:block;font-size:12px;color:var(--sub);margin-bottom:4px; }
+.grid-2 { display:grid;grid-template-columns:1fr 1fr;gap:10px; }
+.badge { display:inline-block;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:600; }
+.badge-green { background:#e8f8e8;color:#27ae60; }
+.habit-row { display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border); }
+.habit-row:last-child { border-bottom:none; }
+.habit-streak { font-size:12px;color:var(--accent);font-weight:600; }
+.settings-group { margin-bottom:24px; }
+.settings-group h3 { font-size:15px;margin-bottom:12px;color:var(--sub);text-transform:uppercase;letter-spacing:.5px; }
+.hidden { display:none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header><h1>Life OS</h1></header>
+  <div class="tabs">
+    <div class="tab active" data-tab="todo">待办</div>
+    <div class="tab" data-tab="course">课程</div>
+    <div class="tab" data-tab="habit">习惯</div>
+    <div class="tab" data-tab="settings">设置</div>
+  </div>
+  <div id="content"><div class="loading">加载中...</div></div>
+  <button class="fab" id="aiBtn">💬</button>
+</div>
+
+<div class="ai-panel hidden" id="aiPanel">
+  <div class="ai-header">
+    <button class="btn btn-outline" id="aiClose">← 返回</button>
+    <h3>AI 助手</h3>
+  </div>
+  <div class="ai-messages" id="aiMessages"></div>
+  <div class="ai-input">
+    <input class="input" id="aiInput" placeholder="问点什么...">
+    <button class="btn btn-accent" id="aiSend">发送</button>
+  </div>
+</div>
+
+<script>
+// ============================================================
+const API = 'http://localhost:2456/api';
+let state = { tasks:[], courses:[], habits:[], habitRecords:{}, settings:{}, aiMessages:[] };
+let currentTab = 'todo';
+
+async function api(method, key, body) {
+  const url = `${API}/${key}`;
+  const opts = { method, headers:{'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error(`${method} ${key} failed`);
+  return r.json();
+}
+
+async function loadAll() {
+  const [tasks, courses, habits, habitRecords, settings] = await Promise.all([
+    api('GET','tasks'), api('GET','courses'), api('GET','habits'),
+    api('GET','habitRecords'), api('GET','settings')
+  ]);
+  Object.assign(state, { tasks, courses, habits, habitRecords, settings });
+}
+
+// ---- UI ----
+function h(tag, attrs={}, ...children) {
+  const el = document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs)) {
+    if (k === 'className') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  children.flat().forEach(c => { if (c!=null) el.append(typeof c==='string' ? document.createTextNode(c) : c); });
+  return el;
+}
+
+function renderContent() {
+  const c = document.getElementById('content');
+  c.innerHTML = '';
+  if (currentTab === 'todo') renderTodo(c);
+  else if (currentTab === 'course') renderCourses(c);
+  else if (currentTab === 'habit') renderHabits(c);
+  else if (currentTab === 'settings') renderSettings(c);
+}
+
+function renderTodo(container) {
+  const tasks = state.tasks.filter(t => !t.deleted);
+  const active = tasks.filter(t => !t.done);
+  const done = tasks.filter(t => t.done);
+
+  // Show add form
+  container.appendChild(h('div',{className:'add-form'}, ...[
+    h('h3',{},'新建任务'),
+    h('div',{className:'form-row'}, h('input',{className:'input',id:'todoTitle',placeholder:'任务标题...'})),
+    h('div',{className:'form-row grid-2'}, 
+      h('input',{className:'input',id:'todoDDL',type:'date'}),
+      h('select',{className:'input',id:'todoQuadrant'}, ...[
+        h('option',{value:'urgent-important'},'紧急+重要'),
+        h('option',{value:'urgent-not'},'紧急+不重要'),
+        h('option',{value:'not-important'},'不紧急+重要'),
+        h('option',{value:'not-not'},'不紧急+不重要'),
+      ])
+    ),
+    h('button',{className:'btn btn-accent',onClick:addTask},'添加'),
+  ]));
+
+  if (active.length === 0 && done.length === 0) {
+    container.appendChild(h('div',{className:'card'}, h('p',{style:'color:var(--sub);text-align:center;padding:20px'},'暂无任务，开始添加吧 ✨')));
+    return;
+  }
+
+  if (active.length > 0) {
+    container.appendChild(h('h3',{style:'margin:16px 0 8px;font-size:14px;color:var(--sub)'},`进行中 (${active.length})`));
+    active.forEach(t => {
+      const qMap = {'urgent-important':'紧急重要','urgent-not':'紧急','not-important':'重要','not-not':'其他'};
+      const qClass = {'urgent-important':'q-urgent','urgent-not':'q-urgent','not-important':'q-no','not-not':''}
+      container.appendChild(h('div',{className:'card task-row'}, ...[
+        h('div',{className:'check',onClick:()=>toggleTask(t.id)}),
+        h('div',{className:'info'}, ...[
+          h('div',{className:'title'}, h('span',{className:'q '+(qClass[t.quadrant]||'')},qMap[t.quadrant]||'其他'), t.title),
+          h('div',{className:'meta'}, t.ddl ? '截止: '+t.ddl : '无截止'),
+        ]),
+      ]));
+    });
+  }
+
+  if (done.length > 0) {
+    container.appendChild(h('h3',{style:'margin:16px 0 8px;font-size:14px;color:var(--sub)'},`已完成 (${done.length})`));
+    done.slice(0,5).forEach(t => {
+      container.appendChild(h('div',{className:'card task-row done-row'}, ...[
+        h('div',{className:'check done'}),
+        h('div',{className:'info'}, h('div',{className:'title'}, t.title)),
+      ]));
+    });
+    if (done.length > 5) container.appendChild(h('p',{style:'text-align:center;font-size:12px;color:var(--sub);margin-top:8px'},`...还有 ${done.length-5} 个已完成任务`));
+  }
+}
+
+async function addTask() {
+  const title = document.getElementById('todoTitle').value.trim();
+  const ddl = document.getElementById('todoDDL').value;
+  const quadrant = document.getElementById('todoQuadrant').value;
+  if (!title) return;
+  const task = { id: 't'+Date.now(), title, ddl, quadrant, done: false, deleted: false, createdAt: new Date().toISOString() };
+  state.tasks.push(task);
+  await api('POST', 'tasks', state.tasks);
+  document.getElementById('todoTitle').value = '';
+  renderContent();
+}
+
+async function toggleTask(id) {
+  const t = state.tasks.find(t => t.id === id);
+  if (!t) return;
+  t.done = !t.done;
+  await api('POST', 'tasks', state.tasks);
+  renderContent();
+}
+
+function renderCourses(container) {
+  const courses = state.courses || [];
+  if (courses.length === 0) {
+    container.appendChild(h('div',{className:'card'}, h('p',{style:'color:var(--sub);text-align:center;padding:20px'},'暂无课程 📚')));
+    return;
+  }
+  const weekdays = ['日','一','二','三','四','五','六'];
+  courses.forEach(c => {
+    container.appendChild(h('div',{className:'card'}, ...[
+      h('h3',{},c.title),
+      h('div',{style:'font-size:13px;color:var(--sub)'}, `周${weekdays[c.dayOfWeek]||'?'} ${c.startTime||''}-${c.endTime||''} @${c.location||'未设置'}`),
+    ]));
+  });
+}
+
+function renderHabits(container) {
+  const habits = state.habits || [];
+  if (habits.length === 0) {
+    container.appendChild(h('div',{className:'card'}, h('p',{style:'color:var(--sub);text-align:center;padding:20px'},'暂无习惯。去设置页添加吧 💪')));
+    return;
+  }
+  const today = new Date().toISOString().slice(0,10);
+  habits.forEach(h => {
+    const records = state.habitRecords[h.id] || {};
+    const doneToday = records[today];
+    let streak = 0;
+    for (let d = new Date();; d.setDate(d.getDate()-1)) {
+      const ds = d.toISOString().slice(0,10);
+      if (records[ds]) streak++;
+      else break;
+    }
+    container.appendChild(h('div',{className:'card habit-row'}, ...[
+      h('div',{className:`check ${doneToday?'done':''}`,onClick:()=>checkinHabit(h.id)}),
+      h('div',{className:'info'}, ...[
+        h('div',{style:'font-size:14px;font-weight:600'},h.name),
+        h('div',{style:'font-size:12px;color:var(--sub);margin-top:2px'},h.time||''),
+      ]),
+      h('div',{className:'habit-streak'}, `🔥 ${streak} 天`),
+    ]));
+  });
+}
+
+async function checkinHabit(habitId) {
+  const today = new Date().toISOString().slice(0,10);
+  if (!state.habitRecords[habitId]) state.habitRecords[habitId] = {};
+  state.habitRecords[habitId][today] = !state.habitRecords[habitId][today];
+  await api('POST', 'habitRecords', state.habitRecords);
+  renderContent();
+}
+
+function renderSettings(container) {
+  const s = state.settings || {};
+  const buildInput = (label, key, type='text') => h('div',{className:'form-row'}, 
+    h('label',{},label), h('input',{className:'input',id:'set-'+key,type,value:s[key]||'',onChange:(e)=>{s[key]=e.target.value;api('POST','settings',s)} }));
+  
+  container.appendChild(h('div',{className:'settings-group'}, ...[
+    h('h3',{},'AI 模型配置'),
+    buildInput('API Key','llmApiKey'),
+    buildInput('Base URL','llmBaseUrl'),
+    buildInput('模型名称','llmModel'),
+  ]));
+  container.appendChild(h('div',{className:'settings-group'}, ...[
+    h('h3',{},'嵌入模型配置'),
+    buildInput('API Key','embeddingApiKey'),
+    buildInput('Base URL','embeddingBaseUrl'),
+    buildInput('模型名称','embeddingModel'),
+  ]));
+  container.appendChild(h('div',{className:'card',style:'textAlign:"center"'}, ...[
+    h('p',{style:'color:var(--sub);fontSize:12px'},'Life OS Desktop v1.0'),
+  ]));
+}
+
+// ---- AI ----
+document.getElementById('aiBtn').addEventListener('click', ()=>{
+  document.getElementById('aiPanel').classList.remove('hidden');
+});
+document.getElementById('aiClose').addEventListener('click', ()=>{
+  document.getElementById('aiPanel').classList.add('hidden');
+});
+
+async function aiSend() {
+  const input = document.getElementById('aiInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+  
+  const msgs = document.getElementById('aiMessages');
+  msgs.appendChild(h('div',{className:'ai-msg user'}, msg));
+  input.value = '';
+  
+  // 尝试调用 LLM API
+  const s = state.settings || {};
+  let reply;
+  if (s.llmApiKey && s.llmBaseUrl && s.llmModel) {
+    try {
+      const base = s.llmBaseUrl.replace(/\/$/, '');
+      const res = await fetch(`${base}/chat/completions`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+s.llmApiKey},
+        body: JSON.stringify({
+          model: s.llmModel,
+          messages: [
+            {role:'system',content:'你是Life OS的AI助手。用户的任务：'+JSON.stringify(state.tasks.slice(0,10))},
+            {role:'user',content:msg}
+          ],
+          max_tokens: 500
+        })
+      });
+      if (res.ok) {
+        const j = await res.json();
+        reply = j.choices?.[0]?.message?.content || '无法获取回复';
+      } else {
+        reply = `API 调用失败: ${res.status} ${res.statusText}`;
+      }
+    } catch(e) {
+      reply = `调用出错: ${e.message}`;
+    }
+  } else {
+    reply = `你好！这是 Life OS 桌面版 AI 助手。\n\n你现有 ${state.tasks.filter(t=>!t.done).length} 个待办任务，${(state.courses||[]).length} 门课程。\n\n请先在「设置」页配置 LLM API（Key、URL、模型）以启用 AI 功能。`;
+  }
+  
+  msgs.appendChild(h('div',{className:'ai-msg bot'}, reply));
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+document.getElementById('aiSend').addEventListener('click', aiSend);
+document.getElementById('aiInput').addEventListener('keydown', (e) => { if(e.key==='Enter') aiSend(); });
+
+// ---- Tabs ----
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    currentTab = tab.dataset.tab;
+    renderContent();
+  });
+});
+
+// ---- Init ----
+(async () => {
+  await loadAll();
+  renderContent();
+})();
+</script>
+</body>
+</html>
