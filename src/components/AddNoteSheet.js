@@ -163,10 +163,8 @@ export default function AddNoteSheet({ visible, onClose, onSave, editItem, kind 
 
     onSave(payload);
 
-    // 后台异步生成 embedding
-    embedNote(payload, state.settings)
-      .then(() => { /* 成功 */ })
-      .catch((e) => console.warn('Embedding 生成失败:', e?.message || e));
+    // 注意：自动保存（debounce / 关闭时）不触发向量化，
+    // 只有用户手动点击「保存」按钮时才 embed（见 handleSave）
 
     // 短暂延迟后显示「已保存」
     setTimeout(() => setSaveStatus('saved'), 300);
@@ -208,10 +206,34 @@ export default function AddNoteSheet({ visible, onClose, onSave, editItem, kind 
     };
   }, [content, title, tags, date, visible, silentSave, hasRealChanges]);
 
-  // 手动保存按钮
+  // 手动保存按钮 —— 只有手动保存才触发向量化
   const handleSave = () => {
     if (!content.trim()) return;
     silentSave();
+
+    // 手动保存时才生成 embedding（取最终版本内容）
+    const payload = {
+      id: currentIdRef.current,
+      date: dateRef.current,
+      title: titleRef.current.trim(),
+      content: contentRef.current.trim(),
+      type: isInsight ? 'insight' : 'diary',
+      createdAt: editItem?.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    };
+    if (isInsight) {
+      payload.tags = tagsRef.current.split(/\s+/).filter(Boolean);
+    }
+    if (editItem) Object.assign(payload, { ...editItem, ...payload });
+
+    setEmbedding(true);
+    embedNote(payload, state.settings)
+      .then(() => setEmbedding(false))
+      .catch((e) => {
+        setEmbedding(false);
+        console.warn('Embedding 生成失败:', e?.message || e);
+      });
+
     onClose();
   };
 
