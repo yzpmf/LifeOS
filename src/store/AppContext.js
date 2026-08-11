@@ -2,9 +2,13 @@
 //  Life OS — 全局状态管理 (Context + useReducer)
 // ============================================================
 import React, { createContext, useContext, useReducer, useEffect, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+// 桌面环境走 REST API，移动端走 AsyncStorage
+import { storageGet, storageSet, storageMultiGet, checkBackendOnline, syncPendingToBackend } from '../utils/storage';
 import { STORAGE_KEYS, DEFAULT_SETTINGS } from '../constants';
-import { uid, todayPlus, todayStr, calcStreak } from '../utils/helpers';
+import {
+  uid, todayPlus, todayStr, calcStreak,
+  getEmbeddingConfig, cosineSimilarity, rerankNotes, noteForEmbedding,
+} from '../utils/helpers';
 
 const AppContext = createContext();
 
@@ -15,9 +19,9 @@ const seedTasks = [];
 const seedCourses = [];
 
 const seedHabits = [
-  { id: uid(), name: '背单词', icon: '📖', time: '08:00', repeatRule: '每天', createdAt: todayPlus(-12) },
-  { id: uid(), name: '喝水 2L', icon: '💧', time: '', repeatRule: '每天', createdAt: todayPlus(-5) },
-  { id: uid(), name: '运动 30 分钟', icon: '🏃', time: '19:00', repeatRule: '每天', createdAt: todayPlus(-3) },
+  { id: uid(), name: '背单词', icon: '📖', time: '08:00', repeatRule: '每天', customDays: [], createdAt: todayPlus(-12) },
+  { id: uid(), name: '喝水 2L', icon: '💧', time: '', repeatRule: '每天', customDays: [], createdAt: todayPlus(-5) },
+  { id: uid(), name: '运动 30 分钟', icon: '🏃', time: '19:00', repeatRule: '每天', customDays: [], createdAt: todayPlus(-3) },
 ];
 
 const seedHabitRecords = {};
@@ -156,6 +160,57 @@ function reducer(state, action) {
     case 'SET_SETTINGS':
       return { ...state, settings: { ...state.settings, ...action.payload } };
 
+    // 学习笔记：日记本
+    case 'SET_DIARY':
+      return { ...state, diary: action.payload };
+    case 'ADD_DIARY':
+      return {
+        ...state,
+        diary: [...state.diary, {
+          id: uid(),
+          date: action.payload.date || todayStr(),
+          title: action.payload.title || '',
+          content: action.payload.content || '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }],
+      };
+    case 'UPDATE_DIARY':
+      return {
+        ...state,
+        diary: state.diary.map((d) => d.id === action.payload.id
+          ? { ...d, ...action.payload, updatedAt: new Date().toISOString() }
+          : d),
+      };
+    case 'DELETE_DIARY':
+      return { ...state, diary: state.diary.filter((d) => d.id !== action.payload) };
+
+    // 学习笔记：感悟本
+    case 'SET_INSIGHTS':
+      return { ...state, insights: action.payload };
+    case 'ADD_INSIGHT':
+      return {
+        ...state,
+        insights: [...state.insights, {
+          id: uid(),
+          date: action.payload.date || todayStr(),
+          title: action.payload.title || '',
+          content: action.payload.content || '',
+          tags: action.payload.tags || [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }],
+      };
+    case 'UPDATE_INSIGHT':
+      return {
+        ...state,
+        insights: state.insights.map((i) => i.id === action.payload.id
+          ? { ...i, ...action.payload, updatedAt: new Date().toISOString() }
+          : i),
+      };
+    case 'DELETE_INSIGHT':
+      return { ...state, insights: state.insights.filter((i) => i.id !== action.payload) };
+
     // 聊天
     case 'SET_CHAT':
       return { ...state, chatHistory: action.payload };
@@ -175,33 +230,51 @@ const initialState = {
   plans: {},
   settings: DEFAULT_SETTINGS,
   chatHistory: [{ role: 'ai', text: '你好！我是 Life OS 助手\n\n试着问我：\n• 「今天有什么安排」\n• 「XX 做完了」帮你销账\n• 「帮我创建一个任务」' }],
+  diary: [],
+  insights: [],
 };
 
 // ---- Provider ----
 export function AppProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [loaded, setLoaded] = React.useState(false);
+  const [backendOnline, setBackendOnline] = React.useState(false);
 
-  // 启动时从 AsyncStorage 加载
+  // 启动时加载数据：优先从后端拉取，不在线则回退本地
   useEffect(() => {
     (async () => {
       try {
-        const [t, c, h, hr, s, ch, pl] = await Promise.all([
-          AsyncStorage.getItem(STORAGE_KEYS.tasks),
-          AsyncStorage.getItem(STORAGE_KEYS.courses),
-          AsyncStorage.getItem(STORAGE_KEYS.habits),
-          AsyncStorage.getItem(STORAGE_KEYS.habitRecords),
-          AsyncStorage.getItem(STORAGE_KEYS.settings),
-          AsyncStorage.getItem(STORAGE_KEYS.chatHistory),
-          AsyncStorage.getItem(STORAGE_KEYS.plans),
-        ]);
-        if (t) dispatch({ type: 'SET_TASKS', payload: JSON.parse(t) });
-        if (c) dispatch({ type: 'SET_COURSES', payload: JSON.parse(c) });
-        if (h) dispatch({ type: 'SET_HABITS', payload: JSON.parse(h) });
-        if (hr) dispatch({ type: 'SET_HABIT_RECORDS', payload: JSON.parse(hr) });
-        if (s) dispatch({ type: 'SET_SETTINGS', payload: JSON.parse(s) });
-        if (ch) dispatch({ type: 'SET_CHAT', payload: JSON.parse(ch) });
-        if (pl) dispatch({ type: 'SET_PLANS', payload: JSON.parse(pl) });
+        const online = await checkBackendOnline(true);
+        setBackendOnline(online);
+
+        if (online) {
+          // 后端在线：先尝试推送本地待同步数据，再统一拉取
+          try {
+            await syncPendingToBackend();
+          } catch (e) {
+            console.warn('启动时同步待推送数据失败', e);
+          }
+        }
+
+        const keys = [
+          STORAGE_KEYS.tasks, STORAGE_KEYS.courses, STORAGE_KEYS.habits,
+          STORAGE_KEYS.habitRecords, STORAGE_KEYS.settings, STORAGE_KEYS.chatHistory,
+          STORAGE_KEYS.plans, STORAGE_KEYS.diary, STORAGE_KEYS.insights,
+        ];
+        const results = await storageMultiGet(keys);
+        const data = {};
+        results.forEach(([k, v]) => { data[k] = v; });
+
+        const g = (k) => data[k];
+        if (g(STORAGE_KEYS.tasks)) dispatch({ type: 'SET_TASKS', payload: JSON.parse(g(STORAGE_KEYS.tasks)) });
+        if (g(STORAGE_KEYS.courses)) dispatch({ type: 'SET_COURSES', payload: JSON.parse(g(STORAGE_KEYS.courses)) });
+        if (g(STORAGE_KEYS.habits)) dispatch({ type: 'SET_HABITS', payload: JSON.parse(g(STORAGE_KEYS.habits)) });
+        if (g(STORAGE_KEYS.habitRecords)) dispatch({ type: 'SET_HABIT_RECORDS', payload: JSON.parse(g(STORAGE_KEYS.habitRecords)) });
+        if (g(STORAGE_KEYS.settings)) dispatch({ type: 'SET_SETTINGS', payload: JSON.parse(g(STORAGE_KEYS.settings)) });
+        if (g(STORAGE_KEYS.chatHistory)) dispatch({ type: 'SET_CHAT', payload: JSON.parse(g(STORAGE_KEYS.chatHistory)) });
+        if (g(STORAGE_KEYS.plans)) dispatch({ type: 'SET_PLANS', payload: JSON.parse(g(STORAGE_KEYS.plans)) });
+        if (g(STORAGE_KEYS.diary)) dispatch({ type: 'SET_DIARY', payload: JSON.parse(g(STORAGE_KEYS.diary)) });
+        if (g(STORAGE_KEYS.insights)) dispatch({ type: 'SET_INSIGHTS', payload: JSON.parse(g(STORAGE_KEYS.insights)) });
       } catch (e) {
         console.warn('加载数据失败', e);
       }
@@ -209,43 +282,122 @@ export function AppProvider({ children }) {
     })();
   }, []);
 
-  // 变更时自动保存
+  // 定时检测后端在线状态，上线后自动同步
   useEffect(() => {
     if (!loaded) return;
-    AsyncStorage.setItem(STORAGE_KEYS.tasks, JSON.stringify(state.tasks)).catch(() => {});
+    const id = setInterval(async () => {
+      try {
+        const online = await checkBackendOnline();
+        if (online && !backendOnline) {
+          console.log('后端恢复在线，自动同步...');
+          await syncPendingToBackend();
+          // 同步完成后重新加载数据
+          const keys = [
+            STORAGE_KEYS.tasks, STORAGE_KEYS.courses, STORAGE_KEYS.habits,
+            STORAGE_KEYS.habitRecords, STORAGE_KEYS.settings, STORAGE_KEYS.chatHistory,
+            STORAGE_KEYS.plans, STORAGE_KEYS.diary, STORAGE_KEYS.insights,
+          ];
+          const results = await storageMultiGet(keys);
+          results.forEach(([k, v]) => {
+            if (!v) return;
+            const payload = JSON.parse(v);
+            if (k === STORAGE_KEYS.tasks) dispatch({ type: 'SET_TASKS', payload });
+            if (k === STORAGE_KEYS.courses) dispatch({ type: 'SET_COURSES', payload });
+            if (k === STORAGE_KEYS.habits) dispatch({ type: 'SET_HABITS', payload });
+            if (k === STORAGE_KEYS.habitRecords) dispatch({ type: 'SET_HABIT_RECORDS', payload });
+            if (k === STORAGE_KEYS.settings) dispatch({ type: 'SET_SETTINGS', payload });
+            if (k === STORAGE_KEYS.chatHistory) dispatch({ type: 'SET_CHAT', payload });
+            if (k === STORAGE_KEYS.plans) dispatch({ type: 'SET_PLANS', payload });
+            if (k === STORAGE_KEYS.diary) dispatch({ type: 'SET_DIARY', payload });
+            if (k === STORAGE_KEYS.insights) dispatch({ type: 'SET_INSIGHTS', payload });
+          });
+        }
+        setBackendOnline(online);
+      } catch (e) {
+        console.warn('在线状态检测失败', e);
+      }
+    }, 5000);
+    return () => clearInterval(id);
+  }, [loaded, backendOnline]);
+
+  // 变更时自动保存（桌面：REST API / 移动端：AsyncStorage）
+  useEffect(() => {
+    if (!loaded) return;
+    storageSet(STORAGE_KEYS.tasks, JSON.stringify(state.tasks)).catch(() => {});
   }, [state.tasks, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
-    AsyncStorage.setItem(STORAGE_KEYS.courses, JSON.stringify(state.courses)).catch(() => {});
+    storageSet(STORAGE_KEYS.courses, JSON.stringify(state.courses)).catch(() => {});
   }, [state.courses, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
-    AsyncStorage.setItem(STORAGE_KEYS.habits, JSON.stringify(state.habits)).catch(() => {});
+    storageSet(STORAGE_KEYS.habits, JSON.stringify(state.habits)).catch(() => {});
   }, [state.habits, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
-    AsyncStorage.setItem(STORAGE_KEYS.habitRecords, JSON.stringify(state.habitRecords)).catch(() => {});
+    storageSet(STORAGE_KEYS.habitRecords, JSON.stringify(state.habitRecords)).catch(() => {});
   }, [state.habitRecords, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
-    AsyncStorage.setItem(STORAGE_KEYS.settings, JSON.stringify(state.settings)).catch(() => {});
+    storageSet(STORAGE_KEYS.settings, JSON.stringify(state.settings)).catch(() => {});
   }, [state.settings, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
-    AsyncStorage.setItem(STORAGE_KEYS.chatHistory, JSON.stringify(state.chatHistory)).catch(() => {});
+    storageSet(STORAGE_KEYS.chatHistory, JSON.stringify(state.chatHistory)).catch(() => {});
   }, [state.chatHistory, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
-    AsyncStorage.setItem(STORAGE_KEYS.plans, JSON.stringify(state.plans)).catch(() => {});
+    storageSet(STORAGE_KEYS.plans, JSON.stringify(state.plans)).catch(() => {});
   }, [state.plans, loaded]);
 
-  const value = React.useMemo(() => ({ state, dispatch, loaded }), [state, loaded]);
+  useEffect(() => {
+    if (!loaded) return;
+    storageSet(STORAGE_KEYS.diary, JSON.stringify(state.diary)).catch(() => {});
+  }, [state.diary, loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    storageSet(STORAGE_KEYS.insights, JSON.stringify(state.insights)).catch(() => {});
+  }, [state.insights, loaded]);
+
+  const syncNow = React.useCallback(async () => {
+    try {
+      const result = await syncPendingToBackend();
+      if (result.ok) {
+        const keys = [
+          STORAGE_KEYS.tasks, STORAGE_KEYS.courses, STORAGE_KEYS.habits,
+          STORAGE_KEYS.habitRecords, STORAGE_KEYS.settings, STORAGE_KEYS.chatHistory,
+          STORAGE_KEYS.plans, STORAGE_KEYS.diary, STORAGE_KEYS.insights,
+        ];
+        const results = await storageMultiGet(keys);
+        results.forEach(([k, v]) => {
+          if (!v) return;
+          const payload = JSON.parse(v);
+          if (k === STORAGE_KEYS.tasks) dispatch({ type: 'SET_TASKS', payload });
+          if (k === STORAGE_KEYS.courses) dispatch({ type: 'SET_COURSES', payload });
+          if (k === STORAGE_KEYS.habits) dispatch({ type: 'SET_HABITS', payload });
+          if (k === STORAGE_KEYS.habitRecords) dispatch({ type: 'SET_HABIT_RECORDS', payload });
+          if (k === STORAGE_KEYS.settings) dispatch({ type: 'SET_SETTINGS', payload });
+          if (k === STORAGE_KEYS.chatHistory) dispatch({ type: 'SET_CHAT', payload });
+          if (k === STORAGE_KEYS.plans) dispatch({ type: 'SET_PLANS', payload });
+          if (k === STORAGE_KEYS.diary) dispatch({ type: 'SET_DIARY', payload });
+          if (k === STORAGE_KEYS.insights) dispatch({ type: 'SET_INSIGHTS', payload });
+        });
+      }
+      return result;
+    } catch (e) {
+      console.warn('syncNow failed', e);
+      return { ok: false, reason: e.message };
+    }
+  }, []);
+
+  const value = React.useMemo(() => ({ state, dispatch, loaded, backendOnline, syncNow }), [state, loaded, backendOnline, syncNow]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 

@@ -43,32 +43,44 @@ export const STORAGE_KEYS = {
   settings: 'lifeos.settings.v1',
   chatHistory: 'lifeos.chatHistory.v1',
   plans: 'lifeos.plans.v1',
+  diary: 'lifeos.diary.v1',
+  insights: 'lifeos.insights.v1',
+  embeddings: 'lifeos.embeddings.v1',
 };
+
+// 模型预设已在 v1.1 中移除，改为用户自定义输入 + 获取模型列表。
+// LLM_PRESETS / EMBEDDING_PRESETS 保留为空数组以兼容旧引用。
+export const LLM_PRESETS = [];
+export const EMBEDDING_PRESETS = [];
+export const MODEL_PRESETS = [];
 
 // 默认设置
 export const DEFAULT_SETTINGS = {
   threshold: DEFAULT_THRESHOLD,
-  aiBaseUrl: 'https://api.openai.com/v1',
-  aiApiKey: '',
-  aiModel: 'gpt-4o-mini',
+  // 语言模型（v1.1：用户自定义，去掉预设，支持获取模型列表）
+  llmBaseUrl: '',
+  llmApiKey: '',
+  llmModel: '',
+  llmPreset: 'custom',
+  // 嵌入模型（用于日记 RAG，v1.1：全部自定义）
+  embeddingBaseUrl: '',
+  embeddingApiKey: '',
+  embeddingModel: '',
+  embeddingPreset: 'custom',
   notificationsEnabled: true,
-  semesterStart: '2025-09-01', // 开学日期，用于计算当前第几周
-  planAnchorMonday: null, // 七计划起始周（首次使用那周的周一），用于连续编号 一七/二七…
+  semesterStart: '2025-09-01',
+  planAnchorMonday: null,
+
+  // ---- 以下为兼容旧版字段，逐步废弃 ----
+  aiBaseUrl: '',
+  aiApiKey: '',
+  aiModel: '',
+  aiModelPreset: '',
 };
 
 // 星期名称
 export const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 export const WEEKDAY_NUMS = [1, 2, 3, 4, 5, 6, 7]; // 周一~周日
-
-// DDL 快捷选项
-export const DDL_PRESETS = [
-  { label: '今天', days: 0 },
-  { label: '明天', days: 1 },
-  { label: '3天后', days: 3 },
-  { label: '7天后', days: 7 },
-  { label: '14天后', days: 14 },
-  { label: '30天后', days: 30 },
-];
 
 // 课程颜色选项
 export const COURSE_COLORS = [

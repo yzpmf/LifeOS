@@ -10,8 +10,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import KeyboardAvoidingSheet from './KeyboardAvoidingSheet';
-import { COLORS, QUADRANTS, DDL_PRESETS } from '../constants';
-import { quadrantOf, fmtDDL, isOverdue, todayPlus, daysLeft } from '../utils/helpers';
+import DatePickerChip from './DatePickerChip';
+import { COLORS, QUADRANTS } from '../constants';
+import { quadrantOf, fmtDDL, isOverdue } from '../utils/helpers';
 
 export default function TaskDetailSheet({
   visible, task, threshold, onClose, onUpdate,
@@ -19,7 +20,7 @@ export default function TaskDetailSheet({
 }) {
   const insets = useSafeAreaInsets();
   const [title, setTitle] = useState('');
-  const [ddlDays, setDdlDays] = useState(null);
+  const [ddl, setDdl] = useState(null);
   const [urgent, setUrgent] = useState(false);
   const [note, setNote] = useState('');
   const [stepText, setStepText] = useState('');
@@ -30,14 +31,13 @@ export default function TaskDetailSheet({
     setTitle(task.title);
     setUrgent(!!task.urgent);
     setNote(task.note || '');
-    setDdlDays(task.ddl ? daysLeft(task.ddl) : null);
+    setDdl(task.ddl || null);
     setStepText('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.id, visible]);
 
   if (!task) return null;
 
-  const ddl = ddlDays !== null && ddlDays !== undefined ? todayPlus(ddlDays) : null;
   const q = quadrantOf({ ddl, urgent }, threshold);
   const meta = QUADRANTS[q];
   const overdue = isOverdue(ddl);
@@ -47,17 +47,17 @@ export default function TaskDetailSheet({
 
   // 即时保存：把本地表单合并后写回任务
   const commit = (fields) => {
-    const next = { title, ddlDays, urgent, note, ...fields };
+    const next = { title, ddl, urgent, note, ...fields };
     onUpdate({
       id: task.id,
       title: (next.title || '').trim() || task.title,
-      ddl: next.ddlDays !== null && next.ddlDays !== undefined ? todayPlus(next.ddlDays) : null,
+      ddl: next.ddl || null,
       urgent: next.urgent,
       note: (next.note || '').trim(),
     });
   };
 
-  const pickDdl = (days) => { setDdlDays(days); commit({ ddlDays: days }); };
+  const pickDdl = (value) => { setDdl(value); commit({ ddl: value }); };
   const toggleUrgent = (v) => { setUrgent(v); commit({ urgent: v }); };
 
   const handleAddStep = () => {
@@ -102,25 +102,19 @@ export default function TaskDetailSheet({
 
             {/* ---- 设置 ---- */}
             <Text style={styles.sectionLabel}>截止日期 (DDL)</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={styles.chips}>
-                <TouchableOpacity
-                  style={[styles.chip, ddlDays === null && styles.chipActive]}
-                  onPress={() => pickDdl(null)}
-                >
-                  <Text style={[styles.chipText, ddlDays === null && styles.chipTextActive]}>无期限</Text>
-                </TouchableOpacity>
-                {DDL_PRESETS.map((p) => (
-                  <TouchableOpacity
-                    key={p.days}
-                    style={[styles.chip, ddlDays === p.days && styles.chipActive]}
-                    onPress={() => pickDdl(p.days)}
-                  >
-                    <Text style={[styles.chipText, ddlDays === p.days && styles.chipTextActive]}>{p.label}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
+            <View style={styles.ddlRow}>
+              <DatePickerChip
+                ddl={ddl}
+                onChange={pickDdl}
+                placeholder="选择日期"
+              />
+              <TouchableOpacity
+                style={[styles.clearDdlBtn, !ddl && styles.clearDdlBtnActive]}
+                onPress={() => pickDdl(null)}
+              >
+                <Text style={[styles.clearDdlText, !ddl && styles.clearDdlTextActive]}>无期限</Text>
+              </TouchableOpacity>
+            </View>
 
             <View style={styles.switchRow}>
               <View style={{ flex: 1 }}>
@@ -216,11 +210,11 @@ export default function TaskDetailSheet({
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)' },
   sheet: {
-    backgroundColor: COLORS.bg,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 8,
     maxHeight: '90%',
@@ -241,15 +235,39 @@ const styles = StyleSheet.create({
   overdue: { color: COLORS.danger, fontWeight: '700' },
 
   sectionLabel: { fontSize: 13, fontWeight: '600', color: COLORS.sub, marginTop: 18, marginBottom: 8 },
-  chips: { flexDirection: 'row', gap: 8 },
-  chip: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
-    borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.card,
+  ddlRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
-  chipActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
-  chipText: { fontSize: 13, color: COLORS.sub, fontWeight: '500' },
-  chipTextActive: { color: '#fff', fontWeight: '700' },
-
+  clearDdlBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.line,
+    backgroundColor: COLORS.card,
+  },
+  clearDdlBtnDisabled: {
+    backgroundColor: COLORS.bg,
+    borderColor: COLORS.line,
+  },
+  clearDdlBtnActive: {
+    backgroundColor: COLORS.sub,
+    borderColor: COLORS.sub,
+  },
+  clearDdlText: {
+    fontSize: 13,
+    color: COLORS.sub,
+    fontWeight: '500',
+  },
+  clearDdlTextDisabled: {
+    color: COLORS.muted,
+  },
+  clearDdlTextActive: {
+    color: '#fff',
+    fontWeight: '700',
+  },
   switchRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: COLORS.card, borderRadius: 12, borderWidth: 1, borderColor: COLORS.line,
@@ -295,12 +313,12 @@ const styles = StyleSheet.create({
 
   actions: { flexDirection: 'row', gap: 10, paddingTop: 12 },
   completeBtn: {
-    flex: 1, backgroundColor: COLORS.success, borderRadius: 14, paddingVertical: 14, alignItems: 'center',
+    flex: 1, backgroundColor: COLORS.success, borderRadius: 999, paddingVertical: 14, alignItems: 'center',
   },
   completeBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   deleteBtn: {
-    borderWidth: 1, borderColor: COLORS.danger + '40', borderRadius: 14,
-    paddingVertical: 14, paddingHorizontal: 18, alignItems: 'center', backgroundColor: COLORS.card,
+    borderWidth: 1, borderColor: COLORS.danger + '40', borderRadius: 999,
+    paddingVertical: 14, paddingHorizontal: 18, alignItems: 'center', backgroundColor: '#F8F6F2',
   },
   deleteBtnText: { color: COLORS.danger, fontWeight: '700', fontSize: 14 },
 });

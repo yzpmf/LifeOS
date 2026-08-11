@@ -19,6 +19,7 @@ import AIChatSheet from './src/components/AIChatSheet';
 import TodoScreen from './src/screens/TodoScreen';
 import CourseScreen from './src/screens/CourseScreen';
 import HabitScreen from './src/screens/HabitScreen';
+import LearnScreen from './src/screens/LearnScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import {
   requestNotificationPermission,
@@ -166,6 +167,7 @@ function AppContent() {
         {tab === 'todo' && <TodoScreen />}
         {tab === 'course' && <CourseScreen />}
         {tab === 'habit' && <HabitScreen />}
+        {tab === 'learn' && <LearnScreen />}
         {tab === 'settings' && <SettingsScreen />}
       </View>
 
@@ -188,6 +190,8 @@ function AppContent() {
         habits={state.habits}
         habitRecords={state.habitRecords}
         courses={state.courses}
+        diary={state.diary}
+        insights={state.insights}
         settings={state.settings}
         onCompleteTask={handleCompleteTask}
         onCheckinHabit={handleCheckinHabit}

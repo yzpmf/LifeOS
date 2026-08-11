@@ -161,19 +161,33 @@ export function isSameWeek(dateStr) {
   return startOfWeek(parseYMD(dateStr)).getTime() === startOfWeek(new Date()).getTime();
 }
 
+/** 计算某日期对应学期第几周（semesterStart 为周一日期） */
+export function getWeekOfDate(dateStr, semesterStart) {
+  if (!dateStr || !semesterStart) return null;
+  const start = startOfDay(new Date(semesterStart));
+  const target = startOfDay(parseYMD(dateStr));
+  const diffDays = Math.floor((target - start) / DAY_MS);
+  if (diffDays < 0) return 0;
+  return Math.floor(diffDays / 7) + 1;
+}
+
 /** 取某日期字符串的星期数字 (1=周一, 7=周日) */
 export function weekdayOf(dateStr) {
   const d = parseYMD(dateStr).getDay();
   return d === 0 ? 7 : d;
 }
 
-/** 判断一节课（含临时课）今天这一周的某个星期 d 是否要显示 */
-export function isCourseOnDay(course, day, currentWeek) {
+/** 判断一节课（含临时课）在第 targetWeek 周的某个星期 d 是否要显示 */
+export function isCourseOnDay(course, day, targetWeek, semesterStart) {
   if (course.temporary) {
-    // 临时课：只在它指定那天、且属于本周时显示
-    return !!course.date && isSameWeek(course.date) && weekdayOf(course.date) === day;
+    // 临时课：算出它指定日期对应第几周，跟 targetWeek 比对
+    if (!course.date) return false;
+    if (weekdayOf(course.date) !== day) return false;
+    if (!semesterStart) return isSameWeek(course.date); // 没设置学期，退化为本周判断
+    const courseWeek = getWeekOfDate(course.date, semesterStart);
+    return courseWeek === targetWeek;
   }
-  return course.dayOfWeek === day && isCourseActiveThisWeek(course, currentWeek);
+  return course.dayOfWeek === day && isCourseActiveThisWeek(course, targetWeek);
 }
 
 /** 数字转中文（1~99，仿「一五/十四五」命名） */
@@ -242,4 +256,112 @@ export function matchTask(tasks, keyword) {
     hit = tasks.find((t) => t.title.toLowerCase().includes(kw.slice(0, 4)));
   }
   return hit || null;
+}
+
+/**
+ * 判断某个习惯在指定日期是否应出现
+ * repeatRule: '每天' | '工作日' | '周末' | '自定义'
+ * customDays?: number[]  周一=1 ... 周日=7
+ */
+export function isHabitActiveOnDate(habit, date) {
+  const d = typeof date === 'string' ? parseYMD(date) : new Date(date);
+  const wd = d.getDay() === 0 ? 7 : d.getDay(); // 1=周一 ... 7=周日
+  const rule = habit.repeatRule || '每天';
+  if (rule === '每天') return true;
+  if (rule === '工作日') return wd >= 1 && wd <= 5;
+  if (rule === '周末') return wd >= 6 && wd <= 7;
+  if (rule === '自定义') {
+    const days = Array.isArray(habit.customDays) ? habit.customDays : [];
+    return days.includes(wd);
+  }
+  return true;
+}
+
+/** 判断习惯今天是否应该显示 */
+export function isHabitActiveToday(habit) {
+  return isHabitActiveOnDate(habit, new Date());
+}
+
+/** 文本简单分块（按段落，每块不超过 maxLen 字符） */
+export function splitTextIntoChunks(text, maxLen = 256) {
+  if (!text) return [];
+  const paragraphs = text.split(/\n+/).map((p) => p.trim()).filter(Boolean);
+  const chunks = [];
+  let current = '';
+  for (const p of paragraphs) {
+    if (current.length + p.length + 1 > maxLen) {
+      if (current) chunks.push(current.trim());
+      current = p.length > maxLen ? p.slice(0, maxLen) : p;
+    } else {
+      current = current ? current + '\n' + p : p;
+    }
+  }
+  if (current) chunks.push(current.trim());
+  return chunks.length ? chunks : [text.trim()];
+}
+
+/** 笔记/日记 预处理成适合 embedding 的文本 */
+export function noteForEmbedding(note) {
+  const parts = [];
+  if (note.title) parts.push(`标题：${note.title}`);
+  if (Array.isArray(note.tags) && note.tags.length) parts.push(`标签：${note.tags.join(' ')}`);
+  if (note.content) parts.push(note.content);
+  return parts.join('\n').slice(0, 8000);
+}
+
+/** 向量余弦相似度（a, b 为等长 number[]） */
+export function cosineSimilarity(a, b) {
+  if (!a || !b || a.length !== b.length || a.length === 0) return 0;
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/** 对检索结果做简单重排序：时间衰减 + 关键字匹配 */
+export function rerankNotes(results, queryText, options = {}) {
+  const { timeDecay = 0.05, keywordBoost = 0.03 } = options;
+  const queryWords = queryText.toLowerCase().split(/\s+/).filter(Boolean);
+  const now = Date.now();
+  return results.map((r) => {
+    let score = r.score;
+    const ts = r.updatedAt || r.createdAt || r.date;
+    if (ts) {
+      const days = (now - new Date(ts).getTime()) / (86400000);
+      score *= Math.exp(-timeDecay * days);
+    }
+    const text = `${r.title || ''} ${r.content || ''} ${(r.tags || []).join(' ')}`.toLowerCase();
+    let hits = 0;
+    for (const w of queryWords) {
+      if (text.includes(w)) hits += 1;
+    }
+    if (queryWords.length > 0) {
+      score += (hits / queryWords.length) * keywordBoost;
+    }
+    return { ...r, rerankScore: score };
+  }).sort((a, b) => b.rerankScore - a.rerankScore);
+}
+
+/** 从设置中读取 embedding 配置（兼容旧字段，v1.1 去掉硬编码默认值） */
+export function getEmbeddingConfig(settings) {
+  return {
+    apiKey: settings.embeddingApiKey || settings.llmApiKey || settings.aiApiKey || '',
+    baseUrl: settings.embeddingBaseUrl || settings.llmBaseUrl || settings.aiBaseUrl || '',
+    model: settings.embeddingModel || settings.aiModel || '',
+  };
+}
+
+/** 从设置中读取 LLM 配置（兼容旧字段，v1.1 去掉硬编码默认值） */
+export function getLLMConfig(settings) {
+  return {
+    apiKey: settings.llmApiKey || settings.aiApiKey || '',
+    baseUrl: settings.llmBaseUrl || settings.aiBaseUrl || '',
+    model: settings.llmModel || settings.aiModel || '',
+  };
 }

@@ -2,20 +2,31 @@
 //  Life OS — 通知管理工具
 //  使用 expo-notifications 实现课程提醒、任务 DDL 提醒、打卡提醒
 // ============================================================
-import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { isHabitActiveOnDate } from './helpers';
 
-// 配置通知行为
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+// Web 环境：expo-notifications 不可用，全部操作静默返回
+const isWeb = Platform.OS === 'web';
+
+let Notifications = null;
+if (!isWeb) {
+  try {
+    Notifications = require('expo-notifications');
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+      }),
+    });
+  } catch (e) {
+    console.warn('expo-notifications 不可用（Web 环境）');
+  }
+}
 
 /** 请求通知权限 */
 export async function requestNotificationPermission() {
+  if (!Notifications) return false;
   try {
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
@@ -65,6 +76,7 @@ export async function requestNotificationPermission() {
 
 /** 取消所有已计划的通知 */
 export async function cancelAllNotifications() {
+  if (!Notifications) return;
   try {
     await Notifications.cancelAllScheduledNotificationsAsync();
   } catch (err) {
@@ -74,6 +86,7 @@ export async function cancelAllNotifications() {
 
 /** 取消指定标签的通知 */
 export async function cancelNotificationsByTag(tag) {
+  if (!Notifications) return;
   try {
     const scheduled = await Notifications.getAllScheduledNotificationsAsync();
     for (const notif of scheduled) {
@@ -91,6 +104,7 @@ export async function cancelNotificationsByTag(tag) {
  * 在截止日期当天早上 8 点提醒，如果已过则不设置
  */
 export async function scheduleTaskReminder(task) {
+  if (!Notifications) return;
   if (!task.ddl) return;
 
   try {
@@ -151,6 +165,7 @@ export async function scheduleTaskReminder(task) {
  * 在上课前 N 分钟提醒
  */
 export async function scheduleCourseReminder(course, remindMinutesBefore = 15) {
+  if (!Notifications) return;
   try {
     // 先取消该课程的旧提醒
     await cancelNotificationsByTag(`course-${course.id}`);
@@ -200,6 +215,7 @@ export async function scheduleCourseReminder(course, remindMinutesBefore = 15) {
  * 为打卡习惯设置每日提醒
  */
 export async function scheduleHabitReminder(habit) {
+  if (!Notifications) return;
   try {
     // 先取消该习惯的旧提醒
     await cancelNotificationsByTag(`habit-${habit.id}`);
@@ -231,6 +247,7 @@ export async function scheduleHabitReminder(habit) {
 
 /** 批量重新调度所有通知（App 启动时调用） */
 export async function rescheduleAllNotifications(tasks, courses, habits, settings) {
+  if (!Notifications) return;
   if (!settings.notificationsEnabled) {
     await cancelAllNotifications();
     return;
@@ -247,8 +264,11 @@ export async function rescheduleAllNotifications(tasks, courses, habits, setting
     await scheduleCourseReminder(course, 15);
   }
 
-  // 为习惯设置提醒
+  // 为习惯设置提醒（只在习惯今天应出现时才调度本地通知）
+  const today = new Date();
   for (const habit of habits) {
-    await scheduleHabitReminder(habit);
+    if (isHabitActiveOnDate(habit, today)) {
+      await scheduleHabitReminder(habit);
+    }
   }
 }

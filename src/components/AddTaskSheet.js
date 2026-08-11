@@ -8,13 +8,14 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import KeyboardAvoidingSheet from './KeyboardAvoidingSheet';
-import { COLORS, QUADRANTS, DDL_PRESETS } from '../constants';
-import { quadrantOf, fmtDDL, todayPlus, daysLeft } from '../utils/helpers';
+import DatePickerChip from './DatePickerChip';
+import { COLORS, QUADRANTS } from '../constants';
+import { quadrantOf, fmtDDL } from '../utils/helpers';
 
 export default function AddTaskSheet({ visible, onClose, onSave, editTask, threshold }) {
   const insets = useSafeAreaInsets();
   const [title, setTitle] = useState('');
-  const [ddlDays, setDdlDays] = useState(null); // 相对天数
+  const [ddl, setDdl] = useState(null); // YYYY-MM-DD 或 null
   const [urgent, setUrgent] = useState(false);
   const [note, setNote] = useState('');
 
@@ -23,20 +24,15 @@ export default function AddTaskSheet({ visible, onClose, onSave, editTask, thres
       setTitle(editTask.title);
       setUrgent(editTask.urgent);
       setNote(editTask.note || '');
-      if (editTask.ddl) {
-        setDdlDays(daysLeft(editTask.ddl));
-      } else {
-        setDdlDays(null);
-      }
+      setDdl(editTask.ddl || null);
     } else {
       setTitle('');
-      setDdlDays(null);
+      setDdl(null);
       setUrgent(false);
       setNote('');
     }
   }, [editTask, visible]);
 
-  const ddl = ddlDays !== null ? todayPlus(ddlDays) : null;
   const preview = title ? QUADRANTS[quadrantOf({ ddl, urgent }, threshold)] : null;
 
   const handleSave = () => {
@@ -70,29 +66,21 @@ export default function AddTaskSheet({ visible, onClose, onSave, editTask, thres
             autoFocus={!editTask}
           />
 
-          {/* DDL 快捷选择 */}
+          {/* DDL 选择 */}
           <Text style={styles.label}>截止日期 (DDL)</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
-            <View style={styles.chips}>
-              <TouchableOpacity
-                style={[styles.chip, ddlDays === null && styles.chipActive]}
-                onPress={() => setDdlDays(null)}
-              >
-                <Text style={[styles.chipText, ddlDays === null && styles.chipTextActive]}>无期限</Text>
-              </TouchableOpacity>
-              {DDL_PRESETS.map((p) => (
-                <TouchableOpacity
-                  key={p.days}
-                  style={[styles.chip, ddlDays === p.days && styles.chipActive]}
-                  onPress={() => setDdlDays(p.days)}
-                >
-                  <Text style={[styles.chipText, ddlDays === p.days && styles.chipTextActive]}>
-                    {p.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </ScrollView>
+          <View style={styles.ddlRow}>
+            <DatePickerChip
+              ddl={ddl}
+              onChange={setDdl}
+              placeholder="选择日期"
+            />
+            <TouchableOpacity
+              style={[styles.clearDdlBtn, !ddl && styles.clearDdlBtnActive]}
+              onPress={() => setDdl(null)}
+            >
+              <Text style={[styles.clearDdlText, !ddl && styles.clearDdlTextActive]}>无期限</Text>
+            </TouchableOpacity>
+          </View>
 
           {/* 紧急开关 */}
           <View style={styles.switchRow}>
@@ -154,12 +142,12 @@ const styles = StyleSheet.create({
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.45)',
   },
   sheet: {
-    backgroundColor: COLORS.bg,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     padding: 20,
     maxHeight: '85%',
   },
@@ -185,7 +173,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   input: {
-    backgroundColor: COLORS.card,
+    backgroundColor: '#F8F6F2',
     borderWidth: 1,
     borderColor: COLORS.line,
     borderRadius: 12,
@@ -198,14 +186,13 @@ const styles = StyleSheet.create({
     height: 60,
     textAlignVertical: 'top',
   },
-  chipsScroll: {
+  ddlRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     marginBottom: 4,
   },
-  chips: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  chip: {
+  clearDdlBtn: {
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 20,
@@ -213,16 +200,23 @@ const styles = StyleSheet.create({
     borderColor: COLORS.line,
     backgroundColor: COLORS.card,
   },
-  chipActive: {
-    backgroundColor: COLORS.accent,
-    borderColor: COLORS.accent,
+  clearDdlBtnDisabled: {
+    backgroundColor: COLORS.bg,
+    borderColor: COLORS.line,
   },
-  chipText: {
+  clearDdlBtnActive: {
+    backgroundColor: COLORS.sub,
+    borderColor: COLORS.sub,
+  },
+  clearDdlText: {
     fontSize: 13,
     color: COLORS.sub,
     fontWeight: '500',
   },
-  chipTextActive: {
+  clearDdlTextDisabled: {
+    color: COLORS.muted,
+  },
+  clearDdlTextActive: {
     color: '#fff',
     fontWeight: '700',
   },
@@ -265,7 +259,7 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     backgroundColor: COLORS.accent,
-    borderRadius: 14,
+    borderRadius: 999,
     paddingVertical: 15,
     alignItems: 'center',
     marginTop: 18,

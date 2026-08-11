@@ -6,7 +6,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-nati
 import { COLORS } from '../constants';
 import { useApp } from '../store/AppContext';
 import { useFeedback } from '../store/FeedbackContext';
-import { todayStr, calcStreak, fmtYMD } from '../utils/helpers';
+import { todayStr, calcStreak, fmtYMD, isHabitActiveOnDate } from '../utils/helpers';
 import AddHabitSheet from '../components/AddHabitSheet';
 
 export default function HabitScreen() {
@@ -16,8 +16,15 @@ export default function HabitScreen() {
 
   const [adding, setAdding] = useState(false);
   const [editHabit, setEditHabit] = useState(null);
+  const [showAll, setShowAll] = useState(false);
 
   const today = todayStr();
+
+  // 今日应打卡的习惯（按 repeatRule 过滤）
+  const activeHabitsToday = useMemo(() => habits.filter((h) => isHabitActiveOnDate(h, today)), [habits, today]);
+
+  // 展示列表：默认只显示今天应打卡的
+  const displayHabits = showAll ? habits : activeHabitsToday;
 
   const handleSave = (data) => {
     if (data.id) {
@@ -44,12 +51,12 @@ export default function HabitScreen() {
     }
   };
 
-  // 统计
-  const checkedToday = habits.filter((h) => habitRecords[h.id] && habitRecords[h.id][today]).length;
-  const totalCount = habits.length;
+  // 统计：只统计今天应打卡的
+  const checkedToday = activeHabitsToday.filter((h) => habitRecords[h.id] && habitRecords[h.id][today]).length;
+  const totalCount = activeHabitsToday.length;
   const completionRate = totalCount ? Math.round((checkedToday / totalCount) * 100) : 0;
 
-  // 最近7天热力数据
+  // 最近7天热力数据：每天只统计当天应打卡的习惯
   const last7Days = useMemo(() => {
     const days = [];
     for (let i = 6; i >= 0; i--) {
@@ -59,6 +66,9 @@ export default function HabitScreen() {
     }
     return days;
   }, []);
+
+  // 今天没打卡的习惯数量
+  const undoneToday = totalCount - checkedToday;
 
   return (
     <View style={styles.container}>
@@ -81,11 +91,17 @@ export default function HabitScreen() {
             <Text style={styles.progressValue}>
               <Text style={{ color: COLORS.accent }}>{checkedToday}</Text> / {totalCount}
             </Text>
+            {undoneToday > 0 && (
+              <Text style={styles.progressHint}>{undoneToday} 项待打卡</Text>
+            )}
+            {totalCount === 0 && (
+              <Text style={styles.progressHint}>今天休息日</Text>
+            )}
           </View>
           <View style={styles.progressRight}>
             <View style={styles.ringOuter}>
               <View style={styles.ringInner}>
-                <Text style={styles.ringText}>{completionRate}%</Text>
+                <Text style={styles.ringText}>{totalCount ? `${completionRate}%` : '--'}</Text>
               </View>
             </View>
           </View>
@@ -96,8 +112,9 @@ export default function HabitScreen() {
           <Text style={styles.heatmapTitle}>📅 近 7 天</Text>
           <View style={styles.heatmapRow}>
             {last7Days.map((d) => {
-              const count = habits.filter((h) => habitRecords[h.id] && habitRecords[h.id][d]).length;
-              const ratio = totalCount ? count / totalCount : 0;
+              const dayHabits = habits.filter((h) => isHabitActiveOnDate(h, d));
+              const count = dayHabits.filter((h) => habitRecords[h.id] && habitRecords[h.id][d]).length;
+              const ratio = dayHabits.length ? count / dayHabits.length : 0;
               const isToday = d === today;
               return (
                 <View key={d} style={styles.heatmapCol}>
@@ -134,37 +151,61 @@ export default function HabitScreen() {
                 <Text style={styles.emptyBtnText}>创建习惯</Text>
               </TouchableOpacity>
             </View>
+          ) : displayHabits.length === 0 && !showAll ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyIcon}>🎉</Text>
+              <Text style={styles.emptyText}>今天没有需要打卡的习惯</Text>
+              <Text style={styles.emptyHint}>休息一下，或者查看全部习惯</Text>
+            </View>
           ) : (
-            habits.map((h) => {
+            displayHabits.map((h) => {
+              const isActiveToday = isHabitActiveOnDate(h, today);
               const isChecked = habitRecords[h.id] && habitRecords[h.id][today];
               const streak = calcStreak(habitRecords, h.id);
+              // 不在今天应打卡列表里，且当前是「查看全部」模式
+              const isResting = showAll && !isActiveToday;
               return (
-                <View key={h.id} style={[styles.habitCard, isChecked && styles.habitCardDone]}>
+                <View key={h.id} style={[
+                  styles.habitCard,
+                  isChecked && !isResting && styles.habitCardDone,
+                  isResting && styles.habitCardRest,
+                ]}>
                   <TouchableOpacity
                     style={styles.habitMain}
-                    onPress={() => handleCheckin(h.id)}
+                    onPress={() => { if (!isResting) handleCheckin(h.id); }}
                     onLongPress={() => handleDelete(h.id, h.name)}
-                    activeOpacity={0.7}
+                    activeOpacity={isResting ? 1 : 0.7}
+                    disabled={isResting}
                   >
-                    <TouchableOpacity
-                      style={[styles.checkCircle, isChecked && { backgroundColor: COLORS.success, borderColor: COLORS.success }]}
-                      onPress={() => handleCheckin(h.id)}
-                    >
+                    <View style={[
+                      styles.checkCircle,
+                      isChecked && { backgroundColor: COLORS.success, borderColor: COLORS.success },
+                      isResting && styles.checkCircleRest,
+                    ]}>
                       {isChecked && <Text style={styles.checkMark}>✓</Text>}
-                    </TouchableOpacity>
+                    </View>
                     <View style={styles.habitInfo}>
-                      <Text style={[styles.habitName, isChecked && styles.habitNameDone]}>
-                        {h.icon} {h.name}
-                      </Text>
+                      <View style={styles.habitNameRow}>
+                        <Text style={[styles.habitName, isChecked && styles.habitNameDone, isResting && styles.habitNameRest]}>
+                          {h.icon} {h.name}
+                        </Text>
+                        {isResting && <Text style={styles.restBadge}>休息</Text>}
+                      </View>
                       <View style={styles.habitMeta}>
                         {h.time ? <Text style={styles.habitTime}>⏰ {h.time}</Text> : null}
-                        <Text style={styles.habitRepeat}>{h.repeatRule}</Text>
+                        <Text style={styles.habitRepeat}>{h.repeatRule}
+                          {h.repeatRule === '自定义' && Array.isArray(h.customDays) && h.customDays.length > 0
+                            ? ` · ${h.customDays.map((wd) => ['日', '一', '二', '三', '四', '五', '六'][wd === 7 ? 0 : wd]).join('')}`
+                            : ''}
+                        </Text>
                       </View>
                     </View>
-                    <View style={styles.streakBox}>
-                      <Text style={styles.streakNum}>{streak}</Text>
-                      <Text style={styles.streakLabel}>天连续</Text>
-                    </View>
+                    {!isResting && (
+                      <View style={styles.streakBox}>
+                        <Text style={styles.streakNum}>{streak}</Text>
+                        <Text style={styles.streakLabel}>天连续</Text>
+                      </View>
+                    )}
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={styles.editHabitBtn}
@@ -177,6 +218,19 @@ export default function HabitScreen() {
             })
           )}
         </View>
+
+        {/* 查看全部 / 收起 */}
+        {habits.length > 0 && (
+          <TouchableOpacity
+            style={styles.showAllBtn}
+            onPress={() => setShowAll(!showAll)}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.showAllText}>
+              {showAll ? '收起 · 只看今天的' : `查看全部习惯（${habits.length} 项）`}
+            </Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
       <AddHabitSheet
@@ -205,6 +259,7 @@ const styles = StyleSheet.create({
   progressLeft: { flex: 1, justifyContent: 'center' },
   progressTitle: { fontSize: 13, color: COLORS.sub },
   progressValue: { fontSize: 28, fontWeight: '800', color: COLORS.ink, marginTop: 4 },
+  progressHint: { fontSize: 12, color: COLORS.accent, marginTop: 2 },
   progressRight: { alignItems: 'center', justifyContent: 'center' },
   ringOuter: {
     width: 60, height: 60, borderRadius: 30, borderWidth: 4,
@@ -243,15 +298,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', overflow: 'hidden',
   },
   habitCardDone: { backgroundColor: COLORS.success + '08', borderColor: COLORS.success + '30' },
+  habitCardRest: { opacity: 0.45, backgroundColor: COLORS.card },
   habitMain: { flex: 1, flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
   checkCircle: {
     width: 36, height: 36, borderRadius: 18, borderWidth: 2, borderColor: COLORS.line,
     backgroundColor: COLORS.card, alignItems: 'center', justifyContent: 'center',
   },
+  checkCircleRest: { borderColor: COLORS.line, borderStyle: 'dashed', opacity: 0.5 },
   checkMark: { color: '#fff', fontWeight: '900', fontSize: 18 },
   habitInfo: { flex: 1 },
+  habitNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   habitName: { fontSize: 15, fontWeight: '600', color: COLORS.ink },
   habitNameDone: { color: COLORS.success },
+  habitNameRest: { color: COLORS.muted },
+  restBadge: {
+    fontSize: 9, color: COLORS.muted, backgroundColor: COLORS.line,
+    paddingHorizontal: 6, paddingVertical: 1, borderRadius: 6,
+  },
   habitMeta: { flexDirection: 'row', gap: 10, marginTop: 4 },
   habitTime: { fontSize: 11, color: COLORS.muted },
   habitRepeat: { fontSize: 11, color: COLORS.muted },
@@ -260,4 +323,10 @@ const styles = StyleSheet.create({
   streakLabel: { fontSize: 9, color: COLORS.muted },
   editHabitBtn: { paddingHorizontal: 14, paddingVertical: 20, borderLeftWidth: 1, borderLeftColor: COLORS.line },
   editHabitText: { fontSize: 12, color: COLORS.muted },
+
+  showAllBtn: {
+    marginTop: 16, alignItems: 'center', paddingVertical: 10,
+    borderRadius: 12, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.card,
+  },
+  showAllText: { fontSize: 13, color: COLORS.sub, fontWeight: '600' },
 });

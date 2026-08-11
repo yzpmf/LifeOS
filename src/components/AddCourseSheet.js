@@ -36,7 +36,7 @@ const TIME_SLOTS = [
   '19:00', '19:30', '20:00', '20:30', '21:00', '21:30',
 ];
 
-export default function AddCourseSheet({ visible, onClose, onSave, editCourse }) {
+export default function AddCourseSheet({ visible, onClose, onSave, editCourse, defaultWeek }) {
   const insets = useSafeAreaInsets();
   const [title, setTitle] = useState('');
   const [teacher, setTeacher] = useState('');
@@ -70,10 +70,15 @@ export default function AddCourseSheet({ visible, onClose, onSave, editCourse })
     } else {
       setTitle(''); setTeacher(''); setLocation('');
       setDayOfWeek(1); setStartTime('08:00'); setEndTime('09:40');
-      setColor(COURSE_COLORS[0]); setStartWeek('1'); setEndWeek('16'); setWeekParity('ALL');
+      setColor(COURSE_COLORS[0]);
+      // 新建课程时，默认起止周跟随当前查看的周次
+      const dw = defaultWeek || 1;
+      setStartWeek(String(dw));
+      setEndWeek(String(dw));
+      setWeekParity('ALL');
       setTemporary(false); setDate(todayStr());
     }
-  }, [editCourse, visible]);
+  }, [editCourse, visible, defaultWeek]);
 
   const handleSave = () => {
     if (!title.trim()) return;
@@ -290,12 +295,12 @@ export default function AddCourseSheet({ visible, onClose, onSave, editCourse })
 
 const styles = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)' },
-  sheet: { backgroundColor: COLORS.bg, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, maxHeight: '85%' },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)' },
+  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, maxHeight: '85%' },
   handle: { width: 36, height: 4, borderRadius: 2, backgroundColor: COLORS.line, alignSelf: 'center', marginBottom: 12 },
   sheetTitle: { fontSize: 20, fontWeight: '800', color: COLORS.ink, marginBottom: 8 },
   label: { fontSize: 13, fontWeight: '600', color: COLORS.sub, marginBottom: 6, marginTop: 10 },
-  input: { backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: COLORS.ink },
+  input: { backgroundColor: '#F8F6F2', borderWidth: 1, borderColor: COLORS.line, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: COLORS.ink },
   row2: { flexDirection: 'row', gap: 10 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, borderWidth: 1, borderColor: COLORS.line, backgroundColor: COLORS.card },
@@ -329,11 +334,11 @@ const styles = StyleSheet.create({
   },
   dateChipDay: { fontSize: 13, fontWeight: '700', color: COLORS.ink },
   dateChipWd: { fontSize: 10, color: COLORS.sub, marginTop: 2 },
-  saveBtn: { backgroundColor: COLORS.accent, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 18 },
+  saveBtn: { backgroundColor: COLORS.accent, borderRadius: 999, paddingVertical: 14, alignItems: 'center', marginTop: 18 },
   saveBtnDisabled: { backgroundColor: COLORS.line },
   saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   timeOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
-  timeSheet: { backgroundColor: COLORS.bg, borderRadius: 20, padding: 20, width: '70%', maxHeight: '60%' },
+  timeSheet: { backgroundColor: '#FFFFFF', borderRadius: 24, padding: 20, width: '70%', maxHeight: '60%' },
   timeTitle: { fontSize: 16, fontWeight: '700', color: COLORS.ink, marginBottom: 12, textAlign: 'center' },
   timeOption: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: 8, marginBottom: 2 },
   timeOptionActive: { backgroundColor: COLORS.accent + '20' },

@@ -42,3 +42,12 @@ yarn-error.*
 
 # release artifacts (distributed via GitHub Releases)
 *.apk
+
+# desktop runtime deps & build artifacts
+desktop/node_modules/
+desktop/dist-electron/
+desktop/screenshot.png
+desktop/package-lock.json
+
+# backup files
+*.bak

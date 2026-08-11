@@ -11,6 +11,7 @@ const TABS = [
   { key: 'todo', label: '待办', icon: 'check-square' },
   { key: 'course', label: '课程表', icon: 'calendar' },
   { key: 'habit', label: '打卡', icon: 'target' },
+  { key: 'learn', label: '学习', icon: 'book' },
   { key: 'settings', label: '我的', icon: 'user' },
 ];
 
