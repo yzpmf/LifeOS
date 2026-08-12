@@ -149,6 +149,14 @@ function AppContent() {
     if (list && list.length) dispatch({ type: 'REPLACE_COURSES', payload: list });
   };
 
+  const handleAddCourse = (data) => {
+    dispatch({ type: 'ADD_COURSE', payload: data });
+  };
+
+  const handleDeleteCourse = (id) => {
+    dispatch({ type: 'DELETE_COURSE', payload: id });
+  };
+
   if (!loaded) {
     return (
       <View style={styles.loading}>
@@ -197,6 +205,8 @@ function AppContent() {
         onCheckinHabit={handleCheckinHabit}
         onCreateTask={handleCreateTask}
         onImportCourses={handleImportCourses}
+        onAddCourse={handleAddCourse}
+        onDeleteCourse={handleDeleteCourse}
       />
     </View>
   );

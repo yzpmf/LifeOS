@@ -20,9 +20,9 @@ import { COLORS, WEEKDAYS, COURSE_COLORS } from '../constants';
 import {
   daysLeft, fmtDDL, matchTask, todayWeekday, todayStr, quadrantOf, fmtYMD, parseYMD,
   isCourseOnDay, getCurrentWeek, startOfWeek, fmtDate,
-  getLLMConfig,
+  getLLMConfig, findConflictingCourses, timeToMinutes,
 } from '../utils/helpers';
-import { searchNotes, formatNotesContext, allNotesFromState } from '../utils/embeddings';
+import { searchNotes, formatNotesContext, allNotesFromState, deleteEmbedding } from '../utils/embeddings';
 
 // ---- Markdown 渲染（可能未安装，fallback 到纯文本）----
 let Markdown = null;
@@ -134,6 +134,44 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'add_course',
+      description: '在课程表中添加一门课程。当用户说"帮我加一门课"、"添加课程"、"下周三下午加节课"等时调用。添加前会先检查时间冲突。',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: '课程名称' },
+          day: { type: 'integer', description: '星期，1-7，周一=1，周日=7。临时课程可不填，用 date 推断。' },
+          date: { type: 'string', description: '临时课程的具体日期 YYYY-MM-DD。普通课程不要填。' },
+          start_time: { type: 'string', description: '开始时间，HH:MM，如 08:00' },
+          end_time: { type: 'string', description: '结束时间，HH:MM，如 09:40' },
+          location: { type: 'string', description: '上课地点/教室' },
+          teacher: { type: 'string', description: '教师姓名' },
+          start_week: { type: 'integer', description: '起始周，默认 1' },
+          end_week: { type: 'integer', description: '结束周，默认 16' },
+          week_parity: { type: 'string', enum: ['ALL', 'ODD', 'EVEN'], description: 'ALL=每周，ODD=单周，EVEN=双周。默认 ALL。' },
+        },
+        required: ['title', 'start_time', 'end_time'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_course',
+      description: '从课程表中删除课程。当用户说"删掉XX课"、"把XX课去掉"、"删除周X的XX课"等时调用。支持按名称、星期、开始时间匹配。',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: '课程名称或关键词' },
+          day: { type: 'integer', description: '星期 1-7，可选' },
+          start_time: { type: 'string', description: '开始时间 HH:MM，可选' },
+        },
+      },
+    },
+  },
 ];
 
 // ---- 课程过滤：结合当前周、单双周、临时课程 ----
@@ -145,7 +183,34 @@ function filterCoursesForDay(courses, dateStr, settings) {
 }
 
 // ---- 构建系统 prompt ----
-function buildSystemPrompt(tasks, courses, habits, habitRecords, settings, notesContext = '') {
+/** 把日记/感悟按日期分组，注入系统提示 */
+function buildGroupedNotesContext(notes, maxItems = 30) {
+  if (!notes || notes.length === 0) return '';
+
+  const visible = notes.filter((n) => !n.deleted).slice(0, maxItems);
+  const groups = {};
+  for (const n of visible) {
+    const key = n.date || '未知日期';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(n);
+  }
+  const sortedDates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
+
+  let text = '以下是你最近记录的学习笔记/日记/感悟（按日期分组）：\n\n';
+  for (const date of sortedDates) {
+    text += `【${date}】\n`;
+    for (const n of groups[date]) {
+      const prefix = n.type === 'insight' ? '学习感悟' : '日记';
+      const title = n.title ? `《${n.title}》` : '无标题';
+      const snippet = (n.content || '').replace(/\n+/g, ' ').slice(0, 180);
+      text += `- [${prefix}] ${title}：${snippet}${n.content.length > 180 ? '…' : ''}\n`;
+    }
+    text += '\n';
+  }
+  return text.trim();
+}
+
+function buildSystemPrompt(tasks, courses, habits, habitRecords, settings, notesContext = '', groupedNotes = '') {
   const today = todayStr();
   const wd = todayWeekday();
   const todayCourses = filterCoursesForDay(courses, today, settings);
@@ -168,21 +233,28 @@ ${overdue.length ? `⚠️ 逾期任务：${overdue.map((t) => t.title).join('�
 打卡习惯（${habits.length} 项）：
 ${habits.map((h) => `- ${h.icon}${h.name} ${undoneHabits.includes(h) ? '❌未打卡' : '✅已打卡'}`).join('\n')}
 
-${notesContext ? notesContext + '\n\n' : ''}
+${groupedNotes ? groupedNotes + '\n\n' : ''}${notesContext ? notesContext + '\n\n' : ''}
 规则：
 - 用户提到"做完了/搞定/交了"等，调用 complete_task
 - 用户要创建任务，调用 create_task
 - 用户要查安排，调用 get_schedule
 - 用户要打卡，调用 checkin_habit
 - 用户询问过往笔记、学习记录、日记相关内容，调用 search_notes
+- 用户要求添加/修改课程表，调用 add_course
+- 用户要求删除课程表课程，调用 delete_course
 - 如果用户问"我学过什么"、"我之前记过"、"关于XX的记录"，先 search_notes 再回答
+- 添加课程时若检测到时间冲突，必须列出冲突课程并询问用户是否仍要添加
+- 删除课程时若匹配到多条，列出课程并让用户确认删除哪条/全部
 - 匹配不到时友好询问
 - 回复可用 Markdown 格式（标题、列表、加粗等），适当用 emoji`;
 }
 
 // ---- 执行工具函数 ----
 function executeTool(name, args, ctx) {
-  const { tasks, courses, habits, habitRecords, settings, onCompleteTask, onCheckinHabit, onCreateTask, allNotes } = ctx;
+  const {
+    tasks, courses, habits, habitRecords, settings,
+    onCompleteTask, onCheckinHabit, onCreateTask, onAddCourse, onDeleteCourse, allNotes,
+  } = ctx;
   switch (name) {
     case 'get_schedule': {
       const dateStr = args.date || todayStr();
@@ -236,6 +308,78 @@ function executeTool(name, args, ctx) {
       }
       // 实际检索在调用 LLM 前已同步完成，并通过 notesContext 注入 system prompt
       return JSON.stringify({ results: [], message: '请根据 system prompt 中 notesContext 的内容回答用户。' });
+    }
+    case 'add_course': {
+      const title = (args.title || '').trim();
+      if (!title) return JSON.stringify({ success: false, message: '课程名称不能为空。' });
+      const isTemporary = !!args.date;
+      const newCourse = {
+        title,
+        teacher: (args.teacher || '').trim(),
+        location: (args.location || '').trim(),
+        startTime: args.start_time || '08:00',
+        endTime: args.end_time || '09:40',
+        startWeek: parseInt(args.start_week, 10) || 1,
+        endWeek: parseInt(args.end_week, 10) || 16,
+        weekParity: ['ALL', 'ODD', 'EVEN'].includes(args.week_parity) ? args.week_parity : 'ALL',
+        temporary: isTemporary,
+        date: isTemporary ? args.date : null,
+        dayOfWeek: isTemporary ? (new Date(args.date).getDay() === 0 ? 7 : new Date(args.date).getDay()) : (parseInt(args.day, 10) || 1),
+        color: COURSE_COLORS[courses.length % COURSE_COLORS.length],
+      };
+      // 验证时间
+      if (timeToMinutes(newCourse.startTime) >= timeToMinutes(newCourse.endTime)) {
+        return JSON.stringify({ success: false, message: '开始时间必须早于结束时间。' });
+      }
+      const conflicts = findConflictingCourses(newCourse, courses);
+      if (conflicts.length > 0) {
+        return JSON.stringify({
+          success: false,
+          hasConflict: true,
+          conflicts: conflicts.map((c) => ({
+            title: c.title,
+            day: c.temporary ? c.date : WEEKDAYS[c.dayOfWeek === 7 ? 0 : c.dayOfWeek],
+            time: `${c.startTime}-${c.endTime}`,
+            location: c.location || '',
+          })),
+          message: `检测到 ${conflicts.length} 门时间冲突的课程：\n${conflicts.map((c) => `- ${c.title} ${c.temporary ? c.date : WEEKDAYS[c.dayOfWeek === 7 ? 0 : c.dayOfWeek]} ${c.startTime}-${c.endTime}${c.location ? ' @' + c.location : ''}`).join('\n')}\n\n仍要添加吗？请确认「仍然添加 ${title}」。`,
+        });
+      }
+      onAddCourse(newCourse);
+      return JSON.stringify({ success: true, message: `已添加课程「${title}」\n${WEEKDAYS[newCourse.dayOfWeek === 7 ? 0 : newCourse.dayOfWeek]} ${newCourse.startTime}-${newCourse.endTime}${newCourse.location ? ' @' + newCourse.location : ''}` });
+    }
+    case 'delete_course': {
+      const titleKw = (args.title || '').trim();
+      const day = args.day ? parseInt(args.day, 10) : null;
+      const startTime = args.start_time || null;
+      let matched = courses.filter((c) => !c.deleted);
+      if (titleKw) {
+        matched = matched.filter((c) => c.title.toLowerCase().includes(titleKw.toLowerCase()));
+      }
+      if (day && day >= 1 && day <= 7) {
+        matched = matched.filter((c) => c.dayOfWeek === day);
+      }
+      if (startTime) {
+        matched = matched.filter((c) => c.startTime === startTime);
+      }
+      if (matched.length === 0) {
+        return JSON.stringify({ success: false, message: '未找到匹配的课程。' });
+      }
+      if (matched.length === 1) {
+        onDeleteCourse(matched[0].id);
+        return JSON.stringify({ success: true, message: `已删除课程「${matched[0].title}」（${WEEKDAYS[matched[0].dayOfWeek === 7 ? 0 : matched[0].dayOfWeek]} ${matched[0].startTime}-${matched[0].endTime}）` });
+      }
+      return JSON.stringify({
+        success: false,
+        multipleMatches: true,
+        matches: matched.map((c) => ({
+          id: c.id,
+          title: c.title,
+          day: c.temporary ? c.date : WEEKDAYS[c.dayOfWeek === 7 ? 0 : c.dayOfWeek],
+          time: `${c.startTime}-${c.endTime}`,
+        })),
+        message: `匹配到 ${matched.length} 门课程，请告诉我删除哪一门（可回复「全部删除」或具体课程名+时间）：\n${matched.map((c, i) => `${i + 1}. ${c.title} ${c.temporary ? c.date : WEEKDAYS[c.dayOfWeek === 7 ? 0 : c.dayOfWeek]} ${c.startTime}-${c.endTime}`).join('\n')}`,
+      });
     }
     default: return JSON.stringify({ error: `未知工具: ${name}` });
   }
@@ -349,7 +493,7 @@ function MsgBubble({ role, text }) {
 }
 
 // ---- 主组件 ----
-export default function AIChatSheet({ visible, onClose, tasks, habits, habitRecords, courses, settings, onCompleteTask, onCheckinHabit, onCreateTask, onImportCourses, diary, insights }) {
+export default function AIChatSheet({ visible, onClose, tasks, habits, habitRecords, courses, settings, onCompleteTask, onCheckinHabit, onCreateTask, onImportCourses, onAddCourse, onDeleteCourse, diary, insights }) {
   const insets = useSafeAreaInsets();
   const [msgs, setMsgs] = useState([]);
   const [input, setInput] = useState('');
@@ -376,13 +520,13 @@ export default function AIChatSheet({ visible, onClose, tasks, habits, habitReco
 
   const addMsg = useCallback((role, text) => setMsgs((m) => [...m, { role, text }]), []);
 
-  const allNotes = useMemo(() => allNotesFromState({ diary, insights }), [diary, insights]);
+  const allNotes = useMemo(() => allNotesFromState({ diary, insights }).filter((n) => !n.deleted), [diary, insights]);
 
   const sendToAI = useCallback(async (userText) => {
     if (!hasApiKey) { demoReply(userText); return; }
     setLoading(true);
     try {
-      // 1. 先判断是否需要检索笔记
+      // 1. 判断是否需要检索笔记
       let notesContext = '';
       const noteQuery = inferNoteQuery(userText);
       if (noteQuery) {
@@ -394,8 +538,10 @@ export default function AIChatSheet({ visible, onClose, tasks, habits, habitReco
           console.warn('searchNotes 失败:', e);
         }
       }
+      // 2. 同时注入最近 30 条按日期分组的笔记，确保 AI 知道不同日期的日记/感悟
+      const groupedNotes = buildGroupedNotesContext(allNotes, 30);
 
-      const systemPrompt = buildSystemPrompt(tasks, courses, habits, habitRecords, settings, notesContext);
+      const systemPrompt = buildSystemPrompt(tasks, courses, habits, habitRecords, settings, notesContext, groupedNotes);
       const chatMessages = [
         { role: 'system', content: systemPrompt },
         ...msgs.filter((m) => m.role !== 'system').map((m) => ({ role: m.role === 'ai' ? 'assistant' : 'user', content: m.text })),
@@ -409,7 +555,7 @@ export default function AIChatSheet({ visible, onClose, tasks, habits, habitReco
           for (const tc of response.tool_calls) {
             let fnArgs = {};
             try { fnArgs = JSON.parse(tc.function.arguments); } catch (e) {}
-            const result = executeTool(tc.function.name, fnArgs, { tasks, courses, habits, habitRecords, settings, onCompleteTask, onCheckinHabit, onCreateTask, allNotes });
+            const result = executeTool(tc.function.name, fnArgs, { tasks, courses, habits, habitRecords, settings, onCompleteTask, onCheckinHabit, onCreateTask, onAddCourse, onDeleteCourse, allNotes });
             chatMessages.push({ role: 'tool', tool_call_id: tc.id, content: result });
           }
         } else { break; }

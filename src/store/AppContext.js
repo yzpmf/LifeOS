@@ -8,9 +8,22 @@ import { STORAGE_KEYS, DEFAULT_SETTINGS } from '../constants';
 import {
   uid, todayPlus, todayStr, calcStreak,
   getEmbeddingConfig, cosineSimilarity, rerankNotes, noteForEmbedding,
+  timeToMinutes, isCourseTimeConflict,
 } from '../utils/helpers';
+import { deleteEmbedding } from '../utils/embeddings';
 
 const AppContext = createContext();
+
+// 回收站自动清理阈值（30 天）
+const TRASH_TTL_DAYS = 30;
+const DAY_MS = 86400000;
+
+// 判断笔记是否已过期可自动清理
+function isTrashExpired(item) {
+  if (!item || !item.deleted || !item.deletedAt) return false;
+  const deletedTime = new Date(item.deletedAt).getTime();
+  return Date.now() - deletedTime > TRASH_TTL_DAYS * DAY_MS;
+}
 
 // ---- 初始种子数据 ----
 // 默认不预置任务与课程，新用户/清除数据后是干净的空白状态。
@@ -171,6 +184,7 @@ function reducer(state, action) {
           date: action.payload.date || todayStr(),
           title: action.payload.title || '',
           content: action.payload.content || '',
+          deleted: false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }],
@@ -183,6 +197,21 @@ function reducer(state, action) {
           : d),
       };
     case 'DELETE_DIARY':
+      // v2.1：软删除，内容保留，向量保留，放入回收站
+      return {
+        ...state,
+        diary: state.diary.map((d) => d.id === action.payload
+          ? { ...d, deleted: true, deletedAt: new Date().toISOString() }
+          : d),
+      };
+    case 'RESTORE_DIARY':
+      return {
+        ...state,
+        diary: state.diary.map((d) => d.id === action.payload
+          ? { ...d, deleted: false, deletedAt: null }
+          : d),
+      };
+    case 'PERMANENTLY_DELETE_DIARY':
       return { ...state, diary: state.diary.filter((d) => d.id !== action.payload) };
 
     // 学习笔记：感悟本
@@ -197,6 +226,7 @@ function reducer(state, action) {
           title: action.payload.title || '',
           content: action.payload.content || '',
           tags: action.payload.tags || [],
+          deleted: false,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }],
@@ -209,6 +239,20 @@ function reducer(state, action) {
           : i),
       };
     case 'DELETE_INSIGHT':
+      return {
+        ...state,
+        insights: state.insights.map((i) => i.id === action.payload
+          ? { ...i, deleted: true, deletedAt: new Date().toISOString() }
+          : i),
+      };
+    case 'RESTORE_INSIGHT':
+      return {
+        ...state,
+        insights: state.insights.map((i) => i.id === action.payload
+          ? { ...i, deleted: false, deletedAt: null }
+          : i),
+      };
+    case 'PERMANENTLY_DELETE_INSIGHT':
       return { ...state, insights: state.insights.filter((i) => i.id !== action.payload) };
 
     // 聊天
@@ -396,6 +440,25 @@ export function AppProvider({ children }) {
       return { ok: false, reason: e.message };
     }
   }, []);
+
+  // 启动/数据加载完成后：自动清理回收站中超过 30 天的项目，并同步删除 embedding
+  useEffect(() => {
+    if (!loaded) return;
+    const expiredDiary = state.diary.filter((d) => isTrashExpired(d));
+    const expiredInsights = state.insights.filter((i) => isTrashExpired(i));
+    if (expiredDiary.length === 0 && expiredInsights.length === 0) return;
+
+    (async () => {
+      for (const d of expiredDiary) {
+        dispatch({ type: 'PERMANENTLY_DELETE_DIARY', payload: d.id });
+        try { await deleteEmbedding(d.id); } catch (e) { console.warn('清理日记 embedding 失败', e); }
+      }
+      for (const i of expiredInsights) {
+        dispatch({ type: 'PERMANENTLY_DELETE_INSIGHT', payload: i.id });
+        try { await deleteEmbedding(i.id); } catch (e) { console.warn('清理感悟 embedding 失败', e); }
+      }
+    })();
+  }, [loaded]);
 
   const value = React.useMemo(() => ({ state, dispatch, loaded, backendOnline, syncNow }), [state, loaded, backendOnline, syncNow]);
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
