@@ -161,6 +161,74 @@ export function isSameWeek(dateStr) {
   return startOfWeek(parseYMD(dateStr)).getTime() === startOfWeek(new Date()).getTime();
 }
 
+/** 把 HH:MM 转成分钟数（用于课程时间冲突判断） */
+export function timeToMinutes(time) {
+  if (!time) return 0;
+  const [h, m] = String(time).split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+/**
+ * 判断两门课程在指定周是否时间冲突
+ * 条件：同一天、同一周范围，且 startA < endB && endA > startB
+ * 临时课只跟临时课在精确日期比较，普通课跟普通课按星期+周次比较。
+ */
+export function isCourseTimeConflict(a, b, targetWeek = null) {
+  // 临时课程：比较精确日期
+  if (a.temporary || b.temporary) {
+    if (!a.date || !b.date) return false;
+    if (a.date !== b.date) return false;
+  } else {
+    // 普通课程：星期不同不冲突
+    if (a.dayOfWeek !== b.dayOfWeek) return false;
+    // 周次范围没有交集不冲突
+    const aStart = a.startWeek || 1;
+    const aEnd = a.endWeek || 16;
+    const bStart = b.startWeek || 1;
+    const bEnd = b.endWeek || 16;
+    if (aEnd < bStart || bEnd < aStart) return false;
+    // 单双周过滤（若指定了 targetWeek）
+    if (targetWeek != null) {
+      if (targetWeek < aStart || targetWeek > aEnd) return false;
+      if (targetWeek < bStart || targetWeek > bEnd) return false;
+      if (a.weekParity === 'ODD' && targetWeek % 2 === 0) return false;
+      if (a.weekParity === 'EVEN' && targetWeek % 2 === 1) return false;
+      if (b.weekParity === 'ODD' && targetWeek % 2 === 0) return false;
+      if (b.weekParity === 'EVEN' && targetWeek % 2 === 1) return false;
+    } else {
+      // 未指定 targetWeek：只要周范围有交集且单双周不互斥即可
+      const hasOdd = [a, b].some((c) => c.weekParity === 'ODD' || !c.weekParity || c.weekParity === 'ALL');
+      const hasEven = [a, b].some((c) => c.weekParity === 'EVEN' || !c.weekParity || c.weekParity === 'ALL');
+      // 若 A 单周、B 双周，则任何一周都不会同时出现
+      if (!hasOdd || !hasEven) {
+        // 两者分别为单/双，且不包含 ALL，才认为完全不冲突
+        const aParity = a.weekParity || 'ALL';
+        const bParity = b.weekParity || 'ALL';
+        if ((aParity === 'ODD' && bParity === 'EVEN') || (aParity === 'EVEN' && bParity === 'ODD')) return false;
+      }
+    }
+  }
+
+  const aStartMin = timeToMinutes(a.startTime);
+  const aEndMin = timeToMinutes(a.endTime);
+  const bStartMin = timeToMinutes(b.startTime);
+  const bEndMin = timeToMinutes(b.endTime);
+
+  // 结束时间必须晚于开始时间才视为有效
+  if (aEndMin <= aStartMin || bEndMin <= bStartMin) return false;
+
+  return aStartMin < bEndMin && aEndMin > bStartMin;
+}
+
+/**
+ * 查找与给定课程冲突的所有已有课程
+ */
+export function findConflictingCourses(newCourse, existingCourses, targetWeek = null) {
+  return (existingCourses || [])
+    .filter((c) => c.id !== newCourse.id && !c.deleted)
+    .filter((c) => isCourseTimeConflict(newCourse, c, targetWeek));
+}
+
 /** 计算某日期对应学期第几周（semesterStart 为周一日期） */
 export function getWeekOfDate(dateStr, semesterStart) {
   if (!dateStr || !semesterStart) return null;

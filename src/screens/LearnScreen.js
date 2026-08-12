@@ -4,7 +4,7 @@
 //  AI 回顾：嵌入向量检索 + LLM 总结（已完成）。
 // ============================================================
 import React, { useState, useMemo } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, LayoutAnimation } from 'react-native';
 import { COLORS } from '../constants';
 import { useApp } from '../store/AppContext';
 import { useFeedback } from '../store/FeedbackContext';
@@ -31,6 +31,7 @@ export default function LearnScreen() {
   const [tab, setTab] = useState('diary');
   const [adding, setAdding] = useState(false);
   const [editItem, setEditItem] = useState(null);
+  const [trashExpanded, setTrashExpanded] = useState(false);
 
   // AI 回顾状态
   const [aiQuestion, setAiQuestion] = useState('');
@@ -40,10 +41,12 @@ export default function LearnScreen() {
 
   const isInsight = tab === 'insight';
   const list = isInsight ? insights : diary;
+  const activeList = useMemo(() => list.filter((item) => !item.deleted), [list]);
+  const trashList = useMemo(() => list.filter((item) => item.deleted), [list]);
 
   const sortedList = useMemo(
-    () => [...list].sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt)),
-    [list]
+    () => [...activeList].sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt)),
+    [activeList]
   );
 
   const allNotes = useMemo(() => allNotesFromState({ diary, insights }), [diary, insights]);
@@ -61,15 +64,38 @@ export default function LearnScreen() {
   const handleDelete = async (item) => {
     const ok = await confirm({
       title: `删除${isInsight ? '感悟' : '日记'}`,
-      message: `确定删除「${item.title || item.date}」的内容？`,
+      message: `确定删除「${item.title || item.date}」？删除后可在页面底部「回收站」恢复或彻底清理。`,
       confirmText: '删除',
       destructive: true,
     });
     if (ok) {
       dispatch({ type: isInsight ? 'DELETE_INSIGHT' : 'DELETE_DIARY', payload: item.id });
-      deleteEmbedding(item.id).catch((e) => console.warn('删除 embedding 失败:', e));
-      showToast('已删除', 'success');
+      showToast('已移至回收站', 'success');
     }
+  };
+
+  const handleRestore = (item) => {
+    dispatch({ type: isInsight ? 'RESTORE_INSIGHT' : 'RESTORE_DIARY', payload: item.id });
+    showToast('已恢复', 'success');
+  };
+
+  const handlePermanentDelete = async (item) => {
+    const ok = await confirm({
+      title: '彻底删除',
+      message: `永久删除「${item.title || item.date}」？此操作无法撤销，相关向量数据也会被清除。`,
+      confirmText: '彻底删除',
+      destructive: true,
+    });
+    if (ok) {
+      dispatch({ type: isInsight ? 'PERMANENTLY_DELETE_INSIGHT' : 'PERMANENTLY_DELETE_DIARY', payload: item.id });
+      deleteEmbedding(item.id).catch((e) => console.warn('删除 embedding 失败:', e));
+      showToast('已彻底删除', 'success');
+    }
+  };
+
+  const toggleTrash = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setTrashExpanded((v) => !v);
   };
 
   // ---- AI 回顾：检索 + LLM 总结 ----
@@ -298,6 +324,40 @@ export default function LearnScreen() {
             ))
           )}
         </View>
+
+        {/* 回收站 */}
+        <TouchableOpacity style={styles.trashHeader} onPress={toggleTrash} activeOpacity={0.8}>
+          <Text style={styles.trashTitle}>🗑️ 回收站</Text>
+          <Text style={styles.trashCount}>{trashList.length} 项</Text>
+          <Text style={styles.trashToggle}>{trashExpanded ? '▴' : '▾'}</Text>
+        </TouchableOpacity>
+        {trashExpanded && (
+          <View style={styles.trashBox}>
+            {trashList.length === 0 ? (
+              <Text style={styles.trashEmpty}>回收站是空的。删除的内容会在这里保留 30 天后自动清理。</Text>
+            ) : (
+              trashList
+                .sort((a, b) => new Date(b.deletedAt || 0) - new Date(a.deletedAt || 0))
+                .map((item) => (
+                  <View key={item.id} style={styles.trashItem}>
+                    <View style={styles.trashItemInfo}>
+                      {item.title ? <Text style={styles.trashItemTitle}>{item.title}</Text> : null}
+                      <Text style={styles.trashItemDate} numberOfLines={2}>{item.content}</Text>
+                      <Text style={styles.trashItemMeta}>删除于 {fmtDate(item.deletedAt?.slice(0, 10) || todayStr())}</Text>
+                    </View>
+                    <View style={styles.trashActions}>
+                      <TouchableOpacity style={styles.trashBtn} onPress={() => handleRestore(item)} activeOpacity={0.7}>
+                        <Text style={styles.trashBtnTextRestore}>恢复</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.trashBtn} onPress={() => handlePermanentDelete(item)} activeOpacity={0.7}>
+                        <Text style={styles.trashBtnTextDelete}>彻底删除</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))
+            )}
+          </View>
+        )}
       </ScrollView>
 
       <AddNoteSheet
@@ -401,4 +461,31 @@ const styles = StyleSheet.create({
   tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
   tag: { backgroundColor: COLORS.accentSoft, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
   tagText: { fontSize: 11, color: COLORS.accent, fontWeight: '600' },
+
+  // ---- 回收站 ----
+  trashHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: COLORS.card, borderRadius: 12, borderWidth: 1, borderColor: COLORS.line,
+    paddingHorizontal: 14, paddingVertical: 12, marginTop: 20,
+  },
+  trashTitle: { fontSize: 14, fontWeight: '700', color: COLORS.ink },
+  trashCount: { fontSize: 12, color: COLORS.sub, marginLeft: 8, flex: 1 },
+  trashToggle: { fontSize: 14, color: COLORS.sub },
+  trashBox: {
+    backgroundColor: COLORS.card, borderRadius: 12, borderWidth: 1, borderColor: COLORS.line,
+    padding: 12, marginTop: 8, gap: 10,
+  },
+  trashEmpty: { fontSize: 13, color: COLORS.muted, textAlign: 'center', paddingVertical: 16 },
+  trashItem: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: COLORS.bg, borderRadius: 10, padding: 12,
+  },
+  trashItemInfo: { flex: 1, gap: 2 },
+  trashItemTitle: { fontSize: 14, fontWeight: '700', color: COLORS.ink },
+  trashItemDate: { fontSize: 13, color: COLORS.sub },
+  trashItemMeta: { fontSize: 11, color: COLORS.muted, marginTop: 2 },
+  trashActions: { flexDirection: 'row', gap: 8, marginLeft: 8 },
+  trashBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8 },
+  trashBtnTextRestore: { fontSize: 12, color: COLORS.success, fontWeight: '700' },
+  trashBtnTextDelete: { fontSize: 12, color: COLORS.danger, fontWeight: '700' },
 });
