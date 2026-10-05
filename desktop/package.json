@@ -26,13 +26,16 @@
       "main.js",
       "server.js",
       "index.html",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "desktop-security.cjs"
     ],
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "icon.ico"

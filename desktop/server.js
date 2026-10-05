@@ -8,7 +8,6 @@
 // ============================================================
 
 const express = require('express');
-const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -59,7 +58,7 @@ function getLanIps() {
 
 // ---- HTTP 服务器 ----
 const app = express();
-app.use(cors());
+app.use(require('./desktop-security.cjs'));
 app.use(express.json({ limit: '10mb' }));
 
 // 健康检查（附带局域网 IP，方便手机发现）
@@ -125,7 +124,7 @@ module.exports = { app, PORT, getLanIps, DATA_DIR };
 
 // 如果直接用 node 运行（开发调试），自己启动监听
 if (require.main === module) {
-  app.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '127.0.0.1', () => {
     const ips = getLanIps();
     console.log(`Life OS server @ http://localhost:${PORT}`);
     if (ips.length) console.log(`LAN access: http://${ips[0]}:${PORT}`);
