@@ -18,7 +18,7 @@ function startServer() {
   return new Promise((resolve) => {
     const express = serverApp.app;
     const PORT = serverApp.PORT;
-    serverInstance = express.listen(PORT, '0.0.0.0', () => {
+    serverInstance = express.listen(PORT, '127.0.0.1', () => {
       console.log('Life OS backend started on port', PORT);
       resolve();
     });
@@ -44,7 +44,7 @@ function createWindow() {
   });
 
   // 加载本地 HTML 文件
-  mainWindow.loadFile(path.join(__dirname, 'index.html'));
+  mainWindow.loadURL('http://127.0.0.1:' + PORT);
 
   // 开发时打开 DevTools（正式版注释掉这行）
   // mainWindow.webContents.openDevTools();
